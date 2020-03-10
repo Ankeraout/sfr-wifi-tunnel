@@ -35,7 +35,7 @@ A data frame basically has 4 main fields:
   - Received frame number (r): the number of the last received frame in sequence + 1 (which means that if you've received frames 0 and 2, this number will be 1)
   - Payload: user-defined (directly after the command field)
 
-Frame sequence numbers are 15-bit wide, allowing frame numerotation from 0 to 32767. This is a relatively large value that can prevent 
+Frame sequence numbers are 15-bit wide, allowing frame numerotation from 0 to 32767. This is a relatively large value that can prevent network speed limitations caused by window saturation.
 
 ### Control frames
 A control frame has different formats:
@@ -75,7 +75,7 @@ This command indicates that a frame has been received correctly. It contains the
 
 ## Protocol application examples
 ### Connect
-To make a SWTP tunnel connection, the client first sends a SABM frame to the server, which will answer with another SABM frame..
+To make a SWTP tunnel connection, the client first sends a SABM frame to the server, which will answer with another SABM frame.
 
 If the client does not receive the SABM response frame after a certain amount of time, then it should consider retrying.
 
@@ -89,7 +89,7 @@ To break a SWTP connection, the end that wants to disconnect just sends a DISC f
 This way, if the DISC frame is received correctly, the other end will (silently) close the connection on its side. If the DISC frame was lost, then the TEST will time-out and the other end will end up closing the connection by itself.
 
 ### Periodic test
-If no frames were exchanged for an extended period of time, both ends will try to poll the other in order to check if it is still connected. This is done by sending a TEST frame, to which an ACK reply is expected. As some frames can be lost, both ends should ping the other at least 3 times before declaring a connection loss.
+If no frames were exchanged for an extended period of time, both ends will try to poll each other in order to check if the link is still up. This is done by sending a TEST frame, to which an ACK reply is expected. As some frames can be lost, at least 3 attempts should be made before declaring a connection loss.
 
 The following chronogram shows how it is done:
 
