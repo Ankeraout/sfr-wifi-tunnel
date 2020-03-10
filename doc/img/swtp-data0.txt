@@ -1,0 +1,11 @@
+@startuml
+
+Client --> Server : DATA(0, 0)
+Client --> Server : DATA(1, 0)
+Server --> Client : ACK(1)
+Client --> Server : DATA(2, 0)
+Server --> Client : ACK(2)
+Server --> Client : DATA(0, 3)
+Client --> Server : ACK(1)
+
+@enduml
