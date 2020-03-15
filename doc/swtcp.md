@@ -147,16 +147,16 @@ The payload format is defined like this:
 The SWTCP version byte contains the version of SWTCP used by the server. If it is not compatible with the client's version of SWTCP, then the client should break the connection.
 
 The Server configuration flags byte contains configuration flags. Here is the meaning of this byte:
-Byte number|Role|Meaning if true|Meaning if false
--|-|-|-
-0|Encryption required|Encryption is required|Encryption is not required
-1|Encryption supported|Encryption is supported by the server|Encryption is not supported by the server
-2|Reserved|-|-
-3|Reserved|-|-
-4|Reserved|-|-
-5|Reserved|-|-
-6|Reserved|-|-
-7|Reserved|-|-
+| Byte number | Role                 | Meaning if true                       | Meaning if false                          |
+| ----------- | -------------------- | ------------------------------------- | ----------------------------------------- |
+| 0           | Encryption required  | Encryption is required                | Encryption is not required                |
+| 1           | Encryption supported | Encryption is supported by the server | Encryption is not supported by the server |
+| 2           | Reserved             |                                       |                                           |
+| 3           | Reserved             |                                       |                                           |
+| 4           | Reserved             |                                       |                                           |
+| 5           | Reserved             |                                       |                                           |
+| 6           | Reserved             |                                       |                                           |
+| 7           | Reserved             |                                       |                                           |
 
 ### 0x30 - Authentication request
 This packet is sent by the client to the server in order to ask the server to proceed to SWTP traffic encryption.
@@ -170,13 +170,13 @@ The packet format is defined like this:
 ```
 
 The client's public key is a RSA public key. The value of the public key length field are defined as :
-Public key length byte value | Public key length (bits)
------------------------------|-------------------------
-0x00 | 1024
-0x01 | 2048
-0x02 | 3072
-0x03 | 4096
-Other values | Reserved
+| Public key length byte value | Public key length (bits) |
+| ---------------------------- | ------------------------ |
+| 0x00                         | 1024                     |
+| 0x01                         | 2048                     |
+| 0x02                         | 3072                     |
+| 0x03                         | 4096                     |
+| Other values                 | Reserved                 |
 
 The server challenge is an array of 16 random bytes. This array must be encrypted by the server using the server's private key, and sent back to the client later in order to prove the server's identity.
 ### 0x31 - Authentication refused
