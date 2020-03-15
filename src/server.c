@@ -10,6 +10,7 @@
 #include <threads.h>
 #include <string.h>
 #include <libswtp/swtp.h>
+#include <net/if.h>
 
 #define MAX_CLIENTS 2
 #define RECV_WINDOW 10
@@ -23,12 +24,25 @@ int clientCount = 0;
 // Contains the server socket
 int serverSocket;
 
+// Contains the tun device
+int tunDevice;
+
+// Contains the tun device name
+char tunDeviceName[16];
+
 int createServerSocket();
 void mainServerLoop();
 
 int main(int argc, char **argv) {
     UNUSED_PARAMETER(argc);
     UNUSED_PARAMETER(argv);
+
+    tunDevice = libtun_open(tunDeviceName);
+
+    if(tunDevice < 0) {
+        perror("Failed to open TUN device");
+        return 1;
+    }
 
     serverSocket = createServerSocket();
 
@@ -184,11 +198,12 @@ void onFrameReceived_DATA(swtp_t *client, swtp_frame_t *frame) {
         sendto(serverSocket, &rejFrame, 4, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
     } else {
         if(client->recvWindowLength < client->recvWindowSize) {
-            printf("< ACK %d\n", (header_s + 1) & 0x7fff);
             memcpy(&client->recvWindow[(client->recvWindowStartIndex + client->recvWindowLength) % client->recvWindowSize], frame, sizeof(swtp_frame_t));
+            printf("Placed data frame at index %d in receive window\n", (client->recvWindowStartIndex + client->recvWindowLength) % client->recvWindowSize);
             client->recvWindowLength++;
             uint32_t ackFrame = htonl(0xe0000000 | ((header_s + 1) & 0x7fff));
             sendto(serverSocket, &ackFrame, 4, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
+            printf("< ACK %d\n", (header_s + 1) & 0x7fff);
         } else {
             printf("Receive window full, rejected frame\n");
         }
@@ -199,7 +214,9 @@ void onFrameReceived_SABM(swtp_t *client, swtp_frame_t *frame) {
     UNUSED_PARAMETER(client);
     UNUSED_PARAMETER(frame);
 
-    printf("> SABM\n");
+    int_least16_t windowSize = htonl(*(uint32_t *)frame->payload) & 0x7fff;
+
+    printf("> SABM %d (unexpected -> ignored)\n", windowSize);
 }
 
 void onFrameReceived_DISC(swtp_t *client, swtp_frame_t *frame) {
@@ -230,24 +247,40 @@ void onFrameReceived_TEST(swtp_t *client, swtp_frame_t *frame) {
 }
 
 void onFrameReceived_SREJ(swtp_t *client, swtp_frame_t *frame) {
-    UNUSED_PARAMETER(client);
-    UNUSED_PARAMETER(frame);
-    
-    printf("> SREJ\n");
+    int_least16_t rejectedFrameNumber = htonl(*(uint32_t *)frame->payload) & 0x7fff;
+
+    int frameIndex = ((rejectedFrameNumber - client->sendWindowStartSequenceNumber) + client->sendWindowStartIndex) % client->sendWindowSize;
+    sendto(serverSocket, client->sendWindow[frameIndex].payload, client->sendWindow[frameIndex].size, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
+
+    printf("> SREJ %d\n", rejectedFrameNumber);
+    printf("< DATA %d\n", rejectedFrameNumber);
 }
 
 void onFrameReceived_REJ(swtp_t *client, swtp_frame_t *frame) {
-    UNUSED_PARAMETER(client);
-    UNUSED_PARAMETER(frame);
+    int_least16_t rejectedFrameNumber = htonl(*(uint32_t *)frame->payload) & 0x7fff;
     
-    printf("> REJ\n");
+    printf("> REJ %d\n", rejectedFrameNumber);
+
+    int frameIndex = ((rejectedFrameNumber - client->sendWindowStartSequenceNumber) + client->sendWindowStartIndex) % client->sendWindowSize;
+    int frameCount = (client->sendWindowLength - (rejectedFrameNumber - client->sendWindowStartSequenceNumber));
+    
+    for(int i = 0; i < frameCount; i++) {
+        printf("< DATA %d\n", (rejectedFrameNumber + i) & 0x7fff);
+        sendto(serverSocket, client->sendWindow[frameIndex].payload, client->sendWindow[frameIndex].size, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
+        frameIndex++;
+        frameIndex %= client->sendWindowSize;
+    }
 }
 
 void onFrameReceived_ACK(swtp_t *client, swtp_frame_t *frame) {
     UNUSED_PARAMETER(client);
     UNUSED_PARAMETER(frame);
+
+    int_least16_t acknowledgedFrameNumber = htonl(*(uint32_t *)frame->payload) & 0x7fff;
     
-    printf("> ACK\n");
+    // TODO
+
+    printf("> ACK %d\n", acknowledgedFrameNumber);
 }
 
 void onFrameReceived(swtp_t *client, swtp_frame_t *frame) {

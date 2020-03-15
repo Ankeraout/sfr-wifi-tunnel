@@ -14,8 +14,6 @@
 #define SWTP_SUCCESS 0
 #define SWTP_ERROR -1
 
-struct swtp_s;
-
 typedef void (*swtp_recvCallback)(void *arg, const void *buffer, size_t size);
 
 typedef struct {
@@ -23,7 +21,7 @@ typedef struct {
     uint8_t payload[SWTP_MAX_PAYLOAD_SIZE];
 } swtp_frame_t;
 
-struct swtp_s {
+typedef struct {
     struct sockaddr socketAddress;
 
     uint_least16_t frameSendSequenceNumber : 15;
@@ -44,13 +42,6 @@ struct swtp_s {
     time_t lastReceivedFrameTime;
 
     bool connected;
-};
-
-typedef struct swtp_s swtp_t;
-
-int swtp_connect(swtp_t *swtp, const char *host);
-int swtp_send(swtp_t *swtp, const void *buffer, size_t size);
-int swtp_loop(swtp_t *swtp);
-int swtp_disconnect(swtp_t *swtp);
+} swtp_t;
 
 #endif
