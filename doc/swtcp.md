@@ -20,32 +20,32 @@ Bytes are sent in network order (big-endian)
 
 Packet type is a 1-byte field that indicates the type of the SWTCP packet. 
 It can take these values:
-Value             | Packet direction     | Packet type
-------------------|----------------------|------------
-0x00              | Client &rarr; Server | IP configuration request
-0x01              | Server &rarr; Client | Clear IP configuration
-0x02              | Server &rarr; Client | Add IPv4 address
-0x03              | Server &rarr; Client | Add IPv6 address
-0x04              | Server &rarr; Client | Add IPv4 route
-0x05              | Server &rarr; Client | Add IPv6 route
-0x06              | Server &rarr; Client | Add IPv4 DNS server
-0x07              | Server &rarr; Client | Add IPv6 DNS server
-0x0e              | Client &rarr; Server | Configuration command acknowledge
-0x0f              | Client &rarr; Server | Configuration command error
-0x10              | Client &rarr; Server | Soft handover request
-0x11              | Server &rarr; Client | Soft handover acknowledge
-0x12              | Client &rarr; Server | Soft handover complete
-0x13              | Client &rarr; Server | Hard handover request
-0x14              | Server &rarr; Client | Hard handover complete
-0x15              | Server &rarr; Client | Hard handover failed
-0x20              | Client &rarr; Server | Get server properties
-0x21              | Server &rarr; Client | Server properties
-0x30              | Client &rarr; Server | Authentication request (+public key) (+challenge for server)
-0x31              | Server &rarr; Client | Authentication refused
-0x32              | Server &rarr; Client | Authentication acknowledge (+public key) (+challenge response) (+challenge for client)
-0x33              | Client &rarr; Server | Client challenge response (+challenge response)
-0x34              | Server &rarr; Client | Authentication complete (+secret key encrypted with the client's public key)
-0x35              | Client &rlarr; Server | Initiate key exchange
+|Value | Packet direction | Packet type|
+|------------------|-----------|--------|
+|0x00 | Client &rarr; Server | IP configuration request|
+|0x01 | Server &rarr; Client | Clear IP configuration|
+|0x02 | Server &rarr; Client | Add IPv4 address|
+|0x03 | Server &rarr; Client | Add IPv6 address|
+|0x04 | Server &rarr; Client | Add IPv4 route|
+|0x05 | Server &rarr; Client | Add IPv6 route|
+|0x06 | Server &rarr; Client | Add IPv4 DNS server|
+|0x07 | Server &rarr; Client | Add IPv6 DNS server|
+|0x0e | Client &rarr; Server | Configuration command acknowledge|
+|0x0f | Client &rarr; Server | Configuration command error|
+|0x10 | Client &rarr; Server | Soft handover request|
+|0x11 | Server &rarr; Client | Soft handover acknowledge|
+|0x12 | Client &rarr; Server | Soft handover complete|
+|0x13 | Client &rarr; Server | Hard handover request|
+|0x14 | Server &rarr; Client | Hard handover complete|
+|0x15 | Server &rarr; Client | Hard handover failed|
+|0x20 | Client &rarr; Server | Get server properties|
+|0x21 | Server &rarr; Client | Server properties|
+|0x30 | Client &rarr; Server | Authentication request (+public key) (+challenge for server)|
+|0x31 | Server &rarr; Client | Authentication refused|
+|0x32 | Server &rarr; Client | Authentication acknowledge (+public key) (+challenge response) (+challenge for client)|
+|0x33 | Client &rarr; Server | Client challenge response (+challenge response)|
+|0x34 | Server &rarr; Client | Authentication complete (+secret key encrypted with the client's public key)|
+|0x35 | Client &rlarr; Server | Initiate key exchange|
 
 ### 0x00 - IP configuration request
 This packet is sent by the client to ask the server for IP configuration. It does not have any payload.
