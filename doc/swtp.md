@@ -52,7 +52,9 @@ SREJ | 1100?????????????rrrrrrrrrrrrrrr
 -----+---------------------------------
 REJ  | 1101?????????????rrrrrrrrrrrrrrr
 -----+---------------------------------
-ACK  | 1110?????????????rrrrrrrrrrrrrrr
+RR   | 1110?????????????rrrrrrrrrrrrrrr
+-----+---------------------------------
+RNR  | 1111?????????????rrrrrrrrrrrrrrr
 ```
 
 #### Set Asynchronous Balanced Mode (SABM)
@@ -70,8 +72,11 @@ This command asks the other end to retransmit a frame with the given number.
 #### Reject (REJ)
 This command asks the other end to retransmit the data in its window from the frame that has the given sequence number.
 
-#### Acknowledge (ACK)
-This command indicates that a frame has been received correctly. It contains the sequence number of the last received frame in order (i.e. if frames 0 and 2 have been received but frame 1 is missing, this field will be equal to 1).
+#### Receiver Ready (RR)
+This command indicates that a frame has been received correctly. It contains the sequence number of the last received frame in order (i.e. if frames 0 and 2 have been received but frame 1 is missing, this field will be equal to 1). It also indicates that the receiver has empty space in its receive window and can receive new frames.
+
+#### Receiver Not Ready (RNR)
+This command indicates that a frame has been received correctly, just like the Receiver Ready command. However, the Receiver Not Ready command also indicates that the receive window of the client is full, and so that the sender must wait for a Receiver Ready (RR) frame before sending another frame.
 
 ## Protocol application examples
 ### Connect
