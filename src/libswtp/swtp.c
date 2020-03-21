@@ -72,6 +72,8 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     memcpy(swtp->sendWindow[sendWindowIndex].frame.header, &sendSequenceNumber, 2);
     memcpy(swtp->sendWindow[sendWindowIndex].frame.header + 2, &receiveSequenceNumber, 2);
 
+    swtp->sendWindow[sendWindowIndex].lastSendAttemptTime = time(NULL);
+
     printf("< DATA %d\n", ntohs(sendSequenceNumber));
 
     // Send the data frame
@@ -176,6 +178,8 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
                 if(swtp_isSentFrameNumberValid(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)))) {
                     swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
+
+                    frame->lastSendAttemptTime = time(NULL);
                     
                     printf("< DATA %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
 
@@ -194,6 +198,8 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
                     while(swtp_isSentFrameNumberValid(swtp, rejectedFrameSequenceNumber)) {
                         swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
+
+                        rejectedFrame->lastSendAttemptTime = time(NULL);
 
                         printf("< DATA %d\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
                         
