@@ -181,10 +181,10 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                 {
                     printf("> REJ %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
 
-                    uint_least16_t rejectedFrameIndex = ntohs(*(uint16_t *)(frame->frame.header + 2));
+                    uint_least16_t rejectedFrameSequenceNumber = ntohs(*(uint16_t *)(frame->frame.header + 2));
 
-                    while(swtp_isSentFrameNumberValid(swtp, rejectedFrameIndex)) {
-                        swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameIndex);
+                    while(swtp_isSentFrameNumberValid(swtp, rejectedFrameSequenceNumber)) {
+                        swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
 
                         printf("< DATA %d\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
                         
@@ -193,8 +193,8 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                             return SWTP_ERROR;
                         }
 
-                        rejectedFrameIndex++;
-                        rejectedFrameIndex %= swtp->sendWindowSize;
+                        rejectedFrameSequenceNumber++;
+                        rejectedFrameSequenceNumber &= 0x7fff;
                     }
                 }
                 break;
