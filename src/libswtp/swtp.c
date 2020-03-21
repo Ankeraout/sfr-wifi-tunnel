@@ -223,14 +223,26 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
         // Make sure that the frame has the expected sequence number
         if(frameSequenceNumber != swtp->expectedFrameNumber) {
-            uint32_t rejBuffer = htonl(0xd0000000 | swtp->expectedFrameNumber);
+            // Compute the amount of missed frames
+            uint_least16_t missedFrameCount;
 
-            printf("< REJ %d\n", swtp->expectedFrameNumber);
+            if(frameSequenceNumber < swtp->expectedFrameNumber) {
+                missedFrameCount = SWTP_MAX_SEQUENCE_NUMBER - swtp->expectedFrameNumber + frameSequenceNumber + 1;
+            } else {
+                missedFrameCount = frameSequenceNumber - swtp->expectedFrameNumber;
+            }
 
-            if(sendto(swtp->socket, &rejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
-                // TODO: release lock
-                perror("Failed to send REJ");
-                return SWTP_ERROR;
+            // Ignore multiple (or bad) retransmissions
+            if(missedFrameCount <= swtp->sendWindowSize) {
+                uint32_t rejBuffer = htonl(0xd0000000 | swtp->expectedFrameNumber);
+
+                printf("< REJ %d\n", swtp->expectedFrameNumber);
+
+                if(sendto(swtp->socket, &rejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                    // TODO: release lock
+                    perror("Failed to send REJ");
+                    return SWTP_ERROR;
+                }
             }
         } else {
             swtp->expectedFrameNumber++;

@@ -17,6 +17,7 @@
 #define SWTP_ERROR -1
 #define SWTP_MAX_SEQUENCE_NUMBER 32767
 #define SWTP_SEQUENCE_NUMBER_COUNT 32768
+#define SWTP_MAX_WINDOW_SIZE 16384
 
 typedef struct {
     // The size of the frame (header included)
