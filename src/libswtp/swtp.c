@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <stdio.h>
 
 #include <libswtp/swtp.h>
 
@@ -36,7 +37,7 @@ void swtp_destroy(swtp_t *swtp) {
 int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     // Check the frame size
     if(size > SWTP_MAX_PAYLOAD_SIZE) {
-        printf("Maximum payload size exceeded. (%d > %d)\n", size, SWTP_MAX_PAYLOAD_SIZE);
+        printf("Maximum payload size exceeded. (%lu > %d)\n", size, SWTP_MAX_PAYLOAD_SIZE);
         return SWTP_ERROR;
     }
 
@@ -47,7 +48,7 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     }
 
     // Compute sequence numbers
-    uint_least16_t sendSequenceNumber = htons((uint_least16_t)(swtp->sendWindowStartSequenceNumber + swtp->sendWindowLength));
+    uint_least16_t sendSequenceNumber = htons((swtp->sendWindowStartSequenceNumber + swtp->sendWindowLength) & 0x7fff);
     uint_least16_t receiveSequenceNumber = htons(swtp->expectedFrameNumber);
     uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + swtp->sendWindowLength) % swtp->sendWindowSize;
 
@@ -123,8 +124,14 @@ static inline void swtp_acknowledgeSentFrame(swtp_t *swtp, uint_least16_t sequen
 
     if(acknowledgedFrameCount > swtp->sendWindowLength) {
         // Ignore wrong acknowledgement
+        printf("Ignored wrong acknowledgement\n");
+        return;
+    } else if(acknowledgedFrameCount == 0) {
+        printf("Acknowledgement for 0 frames.\n");
         return;
     }
+
+    printf("Acknowledged %d frames.\n", acknowledgedFrameCount);
 
     swtp->sendWindowLength -= acknowledgedFrameCount;
     swtp->sendWindowStartIndex += acknowledgedFrameCount;
@@ -155,9 +162,13 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                 break;
             
             case 4: // SREJ
+                printf("> SREJ %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
+
                 if(swtp_isSentFrameNumberValid(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)))) {
                     swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
                     
+                    printf("< DATA %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
+
                     if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in))) {
                         return SWTP_ERROR;
                     }
@@ -166,10 +177,14 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
             case 5: // REJ
                 {
+                    printf("> REJ %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
+
                     uint_least16_t rejectedFrameIndex = ntohs(*(uint16_t *)(frame->frame.header + 2));
 
                     while(swtp_isSentFrameNumberValid(swtp, rejectedFrameIndex)) {
                         swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameIndex);
+
+                        printf("< DATA %d\n", ntohs(*(uint16_t *)(rejectedFrame->frame.header + 2)));
                         
                         if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in))) {
                             return SWTP_ERROR;
@@ -183,12 +198,14 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
             case 6: // RR
                 // TODO: acquire SWTP lock
+                printf("> RR %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
                 swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
                 // TODO: release SWTP lock
                 break;
 
             case 7: // RNR
                 // TODO: acquire SWTP lock
+                printf("> RNR %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
                 swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
                 // TODO: set a flag to stop sending
                 // TODO: release SWTP lock
