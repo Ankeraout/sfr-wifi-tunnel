@@ -179,9 +179,9 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                 if(swtp_isSentFrameNumberValid(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)))) {
                     swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
 
-                    frame->lastSendAttemptTime = time(NULL);
+                    rejectedFrame->lastSendAttemptTime = time(NULL);
                     
-                    printf("< DATA %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
+                    printf("< DATA %d\n", ntohs(*(uint16_t *)(rejectedFrame->frame.header + 2)));
 
                     if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
                         perror("Failed to send data frame after SREJ");
