@@ -11,9 +11,10 @@
 #include <string.h>
 #include <libswtp/swtp.h>
 #include <net/if.h>
+#include <signal.h>
 
 #define MAX_CLIENTS 2
-#define RECV_WINDOW 2
+#define RECV_WINDOW 8
 
 // Contains the client list
 swtp_t *clientList[MAX_CLIENTS];
@@ -33,6 +34,7 @@ char tunDeviceName[16];
 int createServerSocket();
 void mainServerLoop();
 int tunReaderMainLoop(void *arg);
+void alarmHandler(int signalNumber);
 
 mtx_t clientListMutex;
 thrd_t tunDeviceReaderThread;
@@ -68,6 +70,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Prepare alarm timeout
+    signal(SIGALRM, alarmHandler);
+    alarm(1);
+
     printf("Ready.\n");
 
     mainServerLoop();
@@ -75,6 +81,18 @@ int main(int argc, char **argv) {
     close(serverSocket);
     
     return 0;
+}
+
+void alarmHandler(int signalNumber) {
+    UNUSED_PARAMETER(signalNumber);
+
+    for(int i = 0; i < MAX_CLIENTS; i++) {
+        if(clientList[i]) {
+            swtp_onTimerTick(clientList[i]);
+        }
+    }
+
+    alarm(1);
 }
 
 int tunReaderMainLoop(void *arg) {

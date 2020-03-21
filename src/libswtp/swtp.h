@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <threads.h>
 #include <time.h>
 
 #define SWTP_PORT 5228
@@ -31,6 +32,9 @@ typedef struct {
         // The payload carried by the SWTP frame (if any)
         uint8_t payload[SWTP_MAX_PAYLOAD_SIZE];
     } __attribute__((packed)) frame;
+
+    // The time of the last time an attempt to send this frame was made.
+    time_t lastSendAttemptTime;
 } swtp_frame_t;
 
 struct swtp_s;
@@ -42,6 +46,8 @@ struct swtp_s {
     int socket;
     struct sockaddr socketAddress;
     swtp_recvCallback_t recvCallback;
+
+    mtx_t sendWindowMutex;
 
     swtp_frame_t *sendWindow;
     uint_least16_t sendWindowSize;
@@ -67,5 +73,11 @@ This function must be called by the application code whenever a SWTP packet is
 received, so that it can "react".
 */
 int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame);
+
+/*
+This function is responsible for checking the timeouts, therefore it must be
+called periodically, between once and twice per second.
+*/
+int swtp_onTimerTick(swtp_t *swtp);
 
 #endif

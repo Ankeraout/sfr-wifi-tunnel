@@ -12,11 +12,11 @@
 #include <libswtp/swtp.h>
 #include <net/if.h>
 #include <sys/select.h>
+#include <signal.h>
 
-// TODO: implement timeouts
 // TODO: implement concurrency
 
-#define MAX_RECEIVE_WINDOW_SIZE 2
+#define MAX_RECEIVE_WINDOW_SIZE 8
 #define READTIMEOUT_TIMED_OUT 1
 #define READTIMEOUT_READ 0
 #define READTIMEOUT_IO_ERROR -1
@@ -31,6 +31,7 @@ thrd_t tunDeviceReaderThread;
 int connectToServer();
 int tunReaderMainLoop(void *arg);
 int mainLoop();
+void alarmHandler(int signalNumber);
 
 int main() {
     tunDevice = libtun_open(tunDeviceName);
@@ -56,7 +57,19 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    // Prepare alarm timeout
+    signal(SIGALRM, alarmHandler);
+    alarm(1);
+
     return mainLoop();
+}
+
+void alarmHandler(int signalNumber) {
+    UNUSED_PARAMETER(signalNumber);
+
+    swtp_onTimerTick(&swtp);
+
+    alarm(1);
 }
 
 int mainLoop() {

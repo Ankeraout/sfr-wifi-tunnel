@@ -25,11 +25,17 @@ int swtp_initSendWindow(swtp_t *swtp, uint_least16_t sendWindowSize) {
 
     swtp->sendWindowSize = sendWindowSize;
 
+    if(mtx_init(&swtp->sendWindowMutex, mtx_plain)) {
+        free(swtp->sendWindow);
+        return SWTP_ERROR;
+    }
+
     return SWTP_SUCCESS;
 }
 
 void swtp_destroy(swtp_t *swtp) {
     if(swtp->sendWindow) {
+        mtx_destroy(&swtp->sendWindowMutex);
         free(swtp->sendWindow);
     }
 }
@@ -42,7 +48,10 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     }
 
     // TODO: Wait for a slot to be available and acquire lock
+    mtx_lock(&swtp->sendWindowMutex);
+
     if(swtp->sendWindowLength >= swtp->sendWindowSize) {
+        mtx_unlock(&swtp->sendWindowMutex);
         printf("Lost frame due to window saturation.\n");
         return SWTP_SUCCESS;
     }
@@ -67,12 +76,12 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
 
     // Send the data frame
     if(sendto(swtp->socket, &swtp->sendWindow[sendWindowIndex].frame, swtp->sendWindow[sendWindowIndex].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
-        // TODO: Release the lock
+        mtx_unlock(&swtp->sendWindowMutex);
         perror("Failed to send data frame");
         return SWTP_ERROR;
     }
 
-    // TODO: Release the lock
+    mtx_unlock(&swtp->sendWindowMutex);
 
     return SWTP_SUCCESS;
 }
@@ -200,18 +209,18 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                 break;
 
             case 6: // RR
-                // TODO: acquire SWTP lock
                 printf("> RR %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
+                mtx_lock(&swtp->sendWindowMutex);
                 swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
-                // TODO: release SWTP lock
+                mtx_unlock(&swtp->sendWindowMutex);
                 break;
 
             case 7: // RNR
-                // TODO: acquire SWTP lock
                 printf("> RNR %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
+                mtx_lock(&swtp->sendWindowMutex);
                 swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
+                mtx_unlock(&swtp->sendWindowMutex);
                 // TODO: set a flag to stop sending
-                // TODO: release SWTP lock
                 break;
         }
     } else {
@@ -259,6 +268,42 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
         // TODO: release lock
     }
+
+    swtp->lastReceivedFrameTime = time(NULL);
+
+    return SWTP_SUCCESS;
+}
+
+int swtp_onTimerTick(swtp_t *swtp) {
+    time_t currentTime = time(NULL);
+
+    mtx_lock(&swtp->sendWindowMutex);
+
+    // If there are frames in the send window
+    for(int i = 0; i < swtp->sendWindowLength; i++) {
+        time_t timeSinceLastAttempt = swtp->sendWindow[i].lastSendAttemptTime - currentTime;
+
+        // If the frame timed out
+        if(timeSinceLastAttempt >= SWTP_TIMEOUT) {
+            // Retransmit the frame
+            swtp->sendWindow[i].lastSendAttemptTime = currentTime;
+            
+            printf("< DATA %d\n", ntohs(*(uint16_t *)(swtp->sendWindow[i].frame.header + 2)));
+
+            if(sendto(swtp->socket, (const void *)&swtp->sendWindow[i].frame, swtp->sendWindow[i].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                mtx_unlock(&swtp->sendWindowMutex);
+                perror("Failed to send data frame after timeout");
+                return SWTP_ERROR;
+            }
+        } else {
+            // We know it's useless to go further because the current frame is
+            // older than the next frame. So if this frame did not time out,
+            // the next frames in the send window also won't.
+            break;
+        }
+    }
+
+    mtx_unlock(&swtp->sendWindowMutex);
 
     return SWTP_SUCCESS;
 }
