@@ -1,15 +1,15 @@
 CC=cc -c
 CFLAGS=-W -Wall -Wextra -std=gnu11 -pedantic
 LD=cc
-LDFLAGS=
+LDFLAGS=-lpthread
 
 BINDIR=bin
 
-SERVER_SOURCES=src/server.c src/libtun/libtun.c
+SERVER_SOURCES=src/server.c src/libtun/libtun.c src/libswtp/swtp.c
 SERVER_OBJECTS=$(SERVER_SOURCES:%.c=%.o)
 SERVER_EXEC=$(BINDIR)/server
 
-CLIENT_SOURCES=src/client.c src/libtun/libtun.c
+CLIENT_SOURCES=src/client.c src/libtun/libtun.c src/libswtp/swtp.c
 CLIENT_OBJECTS=$(CLIENT_SOURCES:%.c=%.o)
 CLIENT_EXEC=$(BINDIR)/client
 
