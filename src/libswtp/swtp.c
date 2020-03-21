@@ -12,6 +12,7 @@ void swtp_init(swtp_t *swtp, int socket, const struct sockaddr *socketAddress) {
 
     swtp->socket = socket;
     memcpy(&swtp->socketAddress, socketAddress, sizeof(struct sockaddr));
+    swtp->lastReceivedFrameTime = time(NULL);
 }
 
 int swtp_initSendWindow(swtp_t *swtp, uint_least16_t sendWindowSize) {
@@ -34,12 +35,14 @@ void swtp_destroy(swtp_t *swtp) {
 
 int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     // Check the frame size
-    if(size >= SWTP_MAX_PAYLOAD_SIZE) {
+    if(size > SWTP_MAX_PAYLOAD_SIZE) {
+        printf("Maximum payload size exceeded. (%d > %d)\n", size, SWTP_MAX_PAYLOAD_SIZE);
         return SWTP_ERROR;
     }
 
     // TODO: Wait for a slot to be available and acquire lock
     if(swtp->sendWindowLength >= swtp->sendWindowSize) {
+        printf("Lost frame due to window saturation.\n");
         return SWTP_SUCCESS;
     }
 
@@ -59,9 +62,12 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     memcpy(swtp->sendWindow[sendWindowIndex].frame.header, &sendSequenceNumber, 2);
     memcpy(swtp->sendWindow[sendWindowIndex].frame.header + 2, &receiveSequenceNumber, 2);
 
+    printf("< DATA %d\n", ntohs(sendSequenceNumber));
+
     // Send the data frame
-    if(sendto(swtp->socket, &swtp->sendWindow[sendWindowIndex].frame, swtp->sendWindow[sendWindowIndex].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in))) {
+    if(sendto(swtp->socket, &swtp->sendWindow[sendWindowIndex].frame, swtp->sendWindow[sendWindowIndex].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
         // TODO: Release the lock
+        perror("sendto() failed");
         return SWTP_ERROR;
     }
 
@@ -94,24 +100,10 @@ swtp_frame_t *swtp_getSentFrame(const swtp_t *swtp, uint_least16_t seq) {
     }
 }
 
-bool swtp_isReceivedFrameNumberValid(const swtp_t *swtp, uint_least16_t seq) {
-    // Check that the sequence number is between the send window bounds
-    if(seq > SWTP_MAX_SEQUENCE_NUMBER) {
-        return NULL;
-    }
-
-    uint_least16_t windowStart = swtp->sendWindowStartSequenceNumber % SWTP_SEQUENCE_NUMBER_COUNT;
-    uint_least16_t windowEnd = (windowStart + swtp->sendWindowLength) % SWTP_SEQUENCE_NUMBER_COUNT;
-
-    if(windowEnd < windowStart) {
-        return seq >= windowStart;
-    } else {
-        return (seq >= windowStart) && (seq < windowEnd);
-    }
-}
-
 static inline int swtp_sendRR(swtp_t *swtp) {
     uint32_t rr = htonl(0xe0000000 | swtp->expectedFrameNumber);
+
+    printf("< RR %d\n", swtp->expectedFrameNumber);
 
     if(sendto(swtp->socket, &rr, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in))) {
         return SWTP_ERROR;
@@ -121,27 +113,31 @@ static inline int swtp_sendRR(swtp_t *swtp) {
 }
 
 static inline void swtp_acknowledgeSentFrame(swtp_t *swtp, uint_least16_t sequenceNumber) {
-    if(swtp_isSentFrameNumberValid(swtp, sequenceNumber)) {
-        uint_least16_t acknowledgedFrameCount;
+    uint_least16_t acknowledgedFrameCount;
 
-        if(sequenceNumber < swtp->sendWindowStartSequenceNumber) {
-            acknowledgedFrameCount = SWTP_MAX_SEQUENCE_NUMBER - swtp->sendWindowStartSequenceNumber + 1 + sequenceNumber;
-        } else {
-            acknowledgedFrameCount = sequenceNumber - swtp->sendWindowStartSequenceNumber;
-        }
-
-        swtp->sendWindowLength -= acknowledgedFrameCount;
-        swtp->sendWindowStartIndex += acknowledgedFrameCount;
-        swtp->sendWindowStartSequenceNumber += acknowledgedFrameCount;
-        swtp->sendWindowStartSequenceNumber %= swtp->sendWindowSize;
+    if(sequenceNumber < swtp->sendWindowStartSequenceNumber) {
+        acknowledgedFrameCount = SWTP_MAX_SEQUENCE_NUMBER - swtp->sendWindowStartSequenceNumber + sequenceNumber;
+    } else {
+        acknowledgedFrameCount = sequenceNumber - swtp->sendWindowStartSequenceNumber;
     }
+
+    if(acknowledgedFrameCount > swtp->sendWindowLength) {
+        // Ignore wrong acknowledgement
+        return;
+    }
+
+    swtp->sendWindowLength -= acknowledgedFrameCount;
+    swtp->sendWindowStartIndex += acknowledgedFrameCount;
+    swtp->sendWindowStartIndex %= swtp->sendWindowSize;
+    swtp->sendWindowStartSequenceNumber += acknowledgedFrameCount;
+    swtp->sendWindowStartSequenceNumber %= SWTP_SEQUENCE_NUMBER_COUNT;
 }
 
 int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
     // Determine the frame type
     if(frame->frame.header[0] & 0x80) {
         // Control frame
-        switch(frame->frame.header[0] & 0x07) {
+        switch((frame->frame.header[0] >> 4) & 0x07) {
             case 0: // SABM
                 // TODO: What to do when receiving a SABM if the connection was already established?
                 break;
@@ -159,8 +155,8 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                 break;
             
             case 4: // SREJ
-                if(swtp_isSentFrameNumberValid(swtp, ntohl(*(uint32_t *)frame->frame.header))) {
-                    swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, ntohl(*(uint32_t *)frame->frame.header));
+                if(swtp_isSentFrameNumberValid(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)))) {
+                    swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
                     
                     if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in))) {
                         return SWTP_ERROR;
@@ -170,7 +166,7 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
             case 5: // REJ
                 {
-                    uint_least16_t rejectedFrameIndex = ntohs(*(uint16_t *)frame->frame.header + 2);
+                    uint_least16_t rejectedFrameIndex = ntohs(*(uint16_t *)(frame->frame.header + 2));
 
                     while(swtp_isSentFrameNumberValid(swtp, rejectedFrameIndex)) {
                         swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameIndex);
@@ -187,13 +183,13 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
             case 6: // RR
                 // TODO: acquire SWTP lock
-                swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)frame->frame.header + 2) - 1);
+                swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
                 // TODO: release SWTP lock
                 break;
 
             case 7: // RNR
                 // TODO: acquire SWTP lock
-                swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)frame->frame.header + 2) - 1);
+                swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
                 // TODO: set a flag to stop sending
                 // TODO: release SWTP lock
                 break;
@@ -201,18 +197,25 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
     } else {
         // Data frame
         // TODO: acquire lock
-        uint_least16_t frameSequenceNumber = ntohs(*(uint16_t *)frame->frame.header + 2);
+        uint_least16_t frameSequenceNumber = ntohs(*(uint16_t *)frame->frame.header) & 0x7fff;
+
+        printf("> DATA %d\n", frameSequenceNumber);
 
         // Make sure that the frame has the expected sequence number
         if(frameSequenceNumber != swtp->expectedFrameNumber) {
             // Send SREJ
             uint32_t srejBuffer = htonl(0xc0000000 | swtp->expectedFrameNumber);
-            
+
+            printf("< SREJ %d\n", swtp->expectedFrameNumber);
+
             if(sendto(swtp->socket, &srejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in))) {
                 // TODO: release lock
                 return SWTP_ERROR;
             }
         } else {
+            swtp->expectedFrameNumber++;
+            swtp->expectedFrameNumber %= SWTP_SEQUENCE_NUMBER_COUNT;
+
             // Acknowledge the frame
             swtp_sendRR(swtp);
 

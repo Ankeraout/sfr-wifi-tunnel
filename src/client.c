@@ -16,7 +16,7 @@
 // TODO: implement timeouts
 // TODO: implement concurrency
 
-#define MAX_RECEIVE_WINDOW_SIZE 32
+#define MAX_RECEIVE_WINDOW_SIZE 2
 #define READTIMEOUT_TIMED_OUT 1
 #define READTIMEOUT_READ 0
 #define READTIMEOUT_IO_ERROR -1
@@ -79,8 +79,6 @@ int mainLoop() {
             perror("SWTP failed to handle received frame");
             return 1;
         }
-
-        printf("> frame\n");
     }
 
     return 0;
@@ -97,12 +95,18 @@ int tunReaderMainLoop(void *arg) {
         if(packetSize < 0) {
             return 1;
         }
-
-        printf("< DATA\n");
-        swtp_sendDataFrame(&swtp, buffer, packetSize);
+        
+        if(swtp_sendDataFrame(&swtp, buffer, packetSize) != SWTP_SUCCESS) {
+            return 1;
+        }
     }
 
     return 0;
+}
+
+void onFrameReceived(swtp_t *swtp, const void *buffer, size_t size) {
+    UNUSED_PARAMETER(swtp);
+    write(tunDevice, buffer, size);
 }
 
 int connectToServer() {
@@ -116,12 +120,11 @@ int connectToServer() {
     struct sockaddr_in serverAddress;
     memset(&serverAddress, 0, sizeof(struct sockaddr_in));
 
-    
     serverAddress.sin_addr.s_addr = htonl(
-        (127 << 24)
-        | (0 << 16)
-        | (0 << 8)
-        | 1
+        (192 << 24)
+        | (168 << 16)
+        | (1 << 8)
+        | 20
     );
 
     serverAddress.sin_family = AF_INET;
@@ -137,15 +140,11 @@ int connectToServer() {
         return -1;
     }
 
-    printf("< SABM\n");
-
     swtp_frame_t buffer;
     socklen_t serverAddressLength;
     buffer.size = recvfrom(clientSocket, &buffer.frame, SWTP_MAX_FRAME_SIZE, 0, (struct sockaddr *)&serverAddress, &serverAddressLength);
     
     // Expect a SABM packet
-    printf("> packet\n");
-
     if(buffer.size != 4) {
         printf("was not SABM (bad length %d)\n", (int)buffer.size);
         return -1;
@@ -159,10 +158,14 @@ int connectToServer() {
     }
 
     swtp.connected = true;
+
     if(swtp_initSendWindow(&swtp, sabmBuffer & 0x00007fff) != SWTP_SUCCESS) {
         perror("SWTP send window initialization failed");
         return -1;
     }
+
+    // Set callback
+    swtp.recvCallback = onFrameReceived;
 
     printf("Connection established.\n");
 

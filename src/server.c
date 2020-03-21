@@ -13,7 +13,7 @@
 #include <net/if.h>
 
 #define MAX_CLIENTS 2
-#define RECV_WINDOW 10
+#define RECV_WINDOW 2
 
 // Contains the client list
 swtp_t *clientList[MAX_CLIENTS];
@@ -32,6 +32,10 @@ char tunDeviceName[16];
 
 int createServerSocket();
 void mainServerLoop();
+int tunReaderMainLoop(void *arg);
+
+mtx_t clientListMutex;
+thrd_t tunDeviceReaderThread;
 
 int main(int argc, char **argv) {
     UNUSED_PARAMETER(argc);
@@ -54,10 +58,48 @@ int main(int argc, char **argv) {
     memset(clientList, 0, sizeof(clientList));
     clientCount = 0;
 
+    if(mtx_init(&clientListMutex, mtx_plain) == thrd_error) {
+        perror("Failed to create mutex");
+        return 1;
+    }
+
+    if(thrd_create(&tunDeviceReaderThread, tunReaderMainLoop, NULL) == thrd_error) {
+        perror("Failed to create tun reader thread");
+        return 1;
+    }
+
+    printf("Ready.\n");
+
     mainServerLoop();
 
     close(serverSocket);
     
+    return 0;
+}
+
+int tunReaderMainLoop(void *arg) {
+    UNUSED_PARAMETER(arg);
+    
+    uint8_t buffer[SWTP_MAX_PAYLOAD_SIZE];
+
+    while(true) {
+        ssize_t packetSize = read(tunDevice, buffer, SWTP_MAX_PAYLOAD_SIZE);
+        
+        if(packetSize < 0) {
+            break;
+        }
+
+        mtx_lock(&clientListMutex);
+
+        for(int i = 0; i < MAX_CLIENTS; i++) {
+            if(clientList[i]) {
+                swtp_sendDataFrame(clientList[i], buffer, packetSize);
+            }
+        }
+
+        mtx_unlock(&clientListMutex);
+    }
+
     return 0;
 }
 
@@ -109,6 +151,11 @@ int findClientByData(swtp_t *client) {
     return -1;
 }
 
+void onDataFrameReceived(swtp_t *swtp, const void *buffer, size_t size) {
+    UNUSED_PARAMETER(swtp);
+    write(tunDevice, buffer, size);
+}
+
 /*
     Accepts a client's connection by sending a SABM response, stores the client
     entry in the client table, and return its index in the table. If an error
@@ -120,15 +167,16 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
         return -1;
     }
 
-    int freeSlot = 0;
+    // Find a free slot for the client
+    int freeSlot;
 
-    for(int i = 0; i < MAX_CLIENTS; i++) {
-        if(clientList[i] == NULL) {
-            freeSlot = i;
+    for(freeSlot = 0; freeSlot < MAX_CLIENTS; freeSlot++) {
+        if(!clientList[freeSlot]) {
             break;
         }
     }
 
+    // Allocate memory for the SWTP structure
     swtp_t *swtp = malloc(sizeof(swtp_t));
 
     if(swtp == NULL) {
@@ -136,34 +184,12 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
     }
 
     // Initialize SWTP structure
-    memcpy(&swtp->socketAddress, socketAddress, sizeof(struct sockaddr));
-    swtp->frameSendSequenceNumber = 0;
-    swtp->frameReceiveSequenceNumber = 0;
+    swtp_init(swtp, serverSocket, socketAddress);
 
-    swtp->sendWindowSize = ntohl(*(uint32_t *)frame->payload) & 0x00007fff;
-    swtp->sendWindow = malloc(sizeof(swtp_frame_t) * swtp->sendWindowSize);
-
-    if(swtp->sendWindow == NULL) {
+    if(swtp_initSendWindow(swtp, ntohs(*((uint16_t *)(frame->frame.header + 2)))) != SWTP_SUCCESS) {
         free(swtp);
         return -1;
     }
-
-    swtp->sendWindowStartIndex = 0;
-    swtp->sendWindowStartSequenceNumber = 0;
-    swtp->sendWindowLength = 0;
-
-    swtp->recvWindowSize = RECV_WINDOW;
-    swtp->recvWindow = malloc(sizeof(swtp_frame_t) * swtp->recvWindowSize);
-
-    if(swtp->sendWindow == NULL) {
-        free(swtp->sendWindow);
-        free(swtp);
-        return -1;
-    }
-
-    swtp->recvWindowStartIndex = 0;
-    swtp->recvWindowStartSequenceNumber = 0;
-    swtp->recvWindowLength = 0;
 
     swtp->lastReceivedFrameTime = time(NULL);
     swtp->connected = true;
@@ -176,124 +202,12 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
     clientList[freeSlot] = swtp;
     clientCount++;
 
-    printf("> SABM %d\n", swtp->sendWindowSize);
-    printf("Accepted %s (send window size=%d) as #%d\n", inet_ntoa((*(struct sockaddr_in *)socketAddress).sin_addr), swtp->sendWindowSize, freeSlot);
-    printf("< SABM %d\n", swtp->recvWindowSize);
+    printf("Accepted %s (recv window size=%d) as #%d\n", inet_ntoa((*(struct sockaddr_in *)socketAddress).sin_addr), swtp->sendWindowSize, freeSlot);
+
+    // Register callback
+    clientList[freeSlot]->recvCallback = onDataFrameReceived;
 
     return freeSlot;
-}
-
-void onFrameReceived_DATA(swtp_t *client, swtp_frame_t *frame) {
-    uint32_t frameHeader = ntohl(*(uint32_t *)frame->payload);
-    uint_least16_t header_s = (frameHeader & 0x7fff0000) >> 16;
-    uint_least16_t header_r = frameHeader & 0x00007fff;
-
-    uint_least16_t expectedFrameNumber = (client->recvWindowStartIndex + client->recvWindowLength) & 0x7fff;
-
-    printf("> DATA (%d, %d)\n", header_s, header_r);
-
-    if(header_s != expectedFrameNumber) {
-        printf("< REJ %d\n", expectedFrameNumber);
-        uint32_t rejFrame = htonl(0xd0000000 | expectedFrameNumber);
-        sendto(serverSocket, &rejFrame, 4, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
-    } else {
-        if(client->recvWindowLength < client->recvWindowSize) {
-            memcpy(&client->recvWindow[(client->recvWindowStartIndex + client->recvWindowLength) % client->recvWindowSize], frame, sizeof(swtp_frame_t));
-            printf("Placed data frame at index %d in receive window\n", (client->recvWindowStartIndex + client->recvWindowLength) % client->recvWindowSize);
-            client->recvWindowLength++;
-            uint32_t ackFrame = htonl(0xe0000000 | ((header_s + 1) & 0x7fff));
-            sendto(serverSocket, &ackFrame, 4, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
-            printf("< ACK %d\n", (header_s + 1) & 0x7fff);
-        } else {
-            printf("Receive window full, rejected frame\n");
-        }
-    }
-}
-
-void onFrameReceived_SABM(swtp_t *client, swtp_frame_t *frame) {
-    UNUSED_PARAMETER(client);
-    UNUSED_PARAMETER(frame);
-
-    int_least16_t windowSize = htonl(*(uint32_t *)frame->payload) & 0x7fff;
-
-    printf("> SABM %d (unexpected -> ignored)\n", windowSize);
-}
-
-void onFrameReceived_DISC(swtp_t *client, swtp_frame_t *frame) {
-    UNUSED_PARAMETER(frame);
-
-    int clientIndex = findClientByData(client);
-
-    free(client->recvWindow);
-    free(client->sendWindow);
-    free(client);
-    
-    clientList[clientIndex] = NULL;
-
-    printf("> DISC\n");
-    printf("Client #%d explicitely disconnected.\n", clientIndex);
-}
-
-void onFrameReceived_TEST(swtp_t *client, swtp_frame_t *frame) {
-    UNUSED_PARAMETER(frame);
-    
-    printf("> TEST\n");
-
-    uint_least16_t expectedFrameNumber = (client->recvWindowStartIndex + client->recvWindowLength) & 0x7fff;
-
-    printf("< ACK %d\n", expectedFrameNumber & 0x7fff);
-    uint32_t ackFrame = htonl(0xe0000000 | expectedFrameNumber);
-    sendto(serverSocket, &ackFrame, 4, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
-}
-
-void onFrameReceived_SREJ(swtp_t *client, swtp_frame_t *frame) {
-    int_least16_t rejectedFrameNumber = htonl(*(uint32_t *)frame->payload) & 0x7fff;
-
-    int frameIndex = ((rejectedFrameNumber - client->sendWindowStartSequenceNumber) + client->sendWindowStartIndex) % client->sendWindowSize;
-    sendto(serverSocket, client->sendWindow[frameIndex].payload, client->sendWindow[frameIndex].size, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
-
-    printf("> SREJ %d\n", rejectedFrameNumber);
-    printf("< DATA %d\n", rejectedFrameNumber);
-}
-
-void onFrameReceived_REJ(swtp_t *client, swtp_frame_t *frame) {
-    int_least16_t rejectedFrameNumber = htonl(*(uint32_t *)frame->payload) & 0x7fff;
-    
-    printf("> REJ %d\n", rejectedFrameNumber);
-
-    int frameIndex = ((rejectedFrameNumber - client->sendWindowStartSequenceNumber) + client->sendWindowStartIndex) % client->sendWindowSize;
-    int frameCount = (client->sendWindowLength - (rejectedFrameNumber - client->sendWindowStartSequenceNumber));
-    
-    for(int i = 0; i < frameCount; i++) {
-        printf("< DATA %d\n", (rejectedFrameNumber + i) & 0x7fff);
-        sendto(serverSocket, client->sendWindow[frameIndex].payload, client->sendWindow[frameIndex].size, 0, (const struct sockaddr *)&client->socketAddress, sizeof(client->socketAddress));
-        frameIndex++;
-        frameIndex %= client->sendWindowSize;
-    }
-}
-
-void onFrameReceived_ACK(swtp_t *client, swtp_frame_t *frame) {
-    UNUSED_PARAMETER(client);
-    UNUSED_PARAMETER(frame);
-
-    int_least16_t acknowledgedFrameNumber = htonl(*(uint32_t *)frame->payload) & 0x7fff;
-    
-    // TODO
-
-    printf("> ACK %d\n", acknowledgedFrameNumber);
-}
-
-void onFrameReceived(swtp_t *client, swtp_frame_t *frame) {
-    switch(frame->payload[0] >> 4) {
-        case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: onFrameReceived_DATA(client, frame); break;
-        case 8: onFrameReceived_SABM(client, frame); break;
-        case 9: onFrameReceived_DISC(client, frame); break;
-        case 10: onFrameReceived_TEST(client, frame); break;
-        case 12: onFrameReceived_SREJ(client, frame); break;
-        case 13: onFrameReceived_REJ(client, frame); break;
-        case 14: onFrameReceived_ACK(client, frame); break;
-        default: printf("Ignored wrong frame\n");
-    }
 }
 
 void mainServerLoop() {
@@ -308,7 +222,7 @@ void mainServerLoop() {
         swtp_frame_t buffer;
 
         // Receive the datagram.
-        ssize_t packetSize = recvfrom(serverSocket, buffer.payload, SWTP_MAX_PAYLOAD_SIZE, 0, (struct sockaddr *)&socketAddress, &socketAddressLength);
+        ssize_t packetSize = recvfrom(serverSocket, &buffer.frame, SWTP_MAX_FRAME_SIZE, 0, (struct sockaddr *)&socketAddress, &socketAddressLength);
 
         // If the packet has a negative size, then an error occurred.
         if(packetSize < 0) {
@@ -318,6 +232,10 @@ void mainServerLoop() {
             break;
         }
 
+        buffer.size = packetSize;
+
+        mtx_lock(&clientListMutex);
+
         // Search for the client
         int clientIndex = findClientBySocketAddress(&socketAddress, socketAddressLength);
 
@@ -326,7 +244,7 @@ void mainServerLoop() {
             // If there is no slot remaining
             if(clientCount < MAX_CLIENTS) {
                 // If the packet is a SABM packet
-                if((buffer.payload[0] & 0xf0) == 0x80) {
+                if((buffer.frame.header[0] & 0xf0) == 0x80) {
                     // Accept the client
                     if(acceptClientSABM((const struct sockaddr *)&socketAddress, &buffer) < 0) {
                         perror("Failed to accept a client");
@@ -338,8 +256,11 @@ void mainServerLoop() {
                 printf("Refused a client because the client list was full.\n");
             }
         } else {
-            clientList[clientIndex]->lastReceivedFrameTime = time(NULL);
-            onFrameReceived(clientList[clientIndex], &buffer);
+            if(swtp_onFrameReceived(clientList[clientIndex], &buffer) != SWTP_SUCCESS) {
+                perror("SWTP failed to handle frame from client");
+            }
         }
+
+        mtx_unlock(&clientListMutex);
     }
 }
