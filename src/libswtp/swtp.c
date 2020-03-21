@@ -223,14 +223,13 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
         // Make sure that the frame has the expected sequence number
         if(frameSequenceNumber != swtp->expectedFrameNumber) {
-            // Send SREJ
-            uint32_t srejBuffer = htonl(0xc0000000 | swtp->expectedFrameNumber);
+            uint32_t rejBuffer = htonl(0xd0000000 | swtp->expectedFrameNumber);
 
-            printf("< SREJ %d\n", swtp->expectedFrameNumber);
+            printf("< REJ %d\n", swtp->expectedFrameNumber);
 
-            if(sendto(swtp->socket, &srejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+            if(sendto(swtp->socket, &rejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
                 // TODO: release lock
-                perror("Failed to send SREJ");
+                perror("Failed to send REJ");
                 return SWTP_ERROR;
             }
         } else {
