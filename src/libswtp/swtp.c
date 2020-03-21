@@ -68,7 +68,7 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     // Send the data frame
     if(sendto(swtp->socket, &swtp->sendWindow[sendWindowIndex].frame, swtp->sendWindow[sendWindowIndex].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
         // TODO: Release the lock
-        perror("sendto() failed");
+        perror("Failed to send data frame");
         return SWTP_ERROR;
     }
 
@@ -106,7 +106,8 @@ static inline int swtp_sendRR(swtp_t *swtp) {
 
     printf("< RR %d\n", swtp->expectedFrameNumber);
 
-    if(sendto(swtp->socket, &rr, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in))) {
+    if(sendto(swtp->socket, &rr, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+        perror("Failed to send RR");
         return SWTP_ERROR;
     }
 
@@ -169,7 +170,8 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                     
                     printf("< DATA %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
 
-                    if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in))) {
+                    if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                        perror("Failed to send data frame after SREJ");
                         return SWTP_ERROR;
                     }
                 }
@@ -186,7 +188,8 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
                         printf("< DATA %d\n", ntohs(*(uint16_t *)(rejectedFrame->frame.header + 2)));
                         
-                        if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in))) {
+                        if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                            perror("Failed to send data frame after REJ");
                             return SWTP_ERROR;
                         }
 
@@ -225,8 +228,9 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
             printf("< SREJ %d\n", swtp->expectedFrameNumber);
 
-            if(sendto(swtp->socket, &srejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in))) {
+            if(sendto(swtp->socket, &srejBuffer, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
                 // TODO: release lock
+                perror("Failed to send SREJ");
                 return SWTP_ERROR;
             }
         } else {
