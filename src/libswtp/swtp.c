@@ -30,6 +30,8 @@ int swtp_initSendWindow(swtp_t *swtp, uint_least16_t sendWindowSize) {
         return SWTP_ERROR;
     }
 
+    swtp->connected = true;
+
     return SWTP_SUCCESS;
 }
 
@@ -90,6 +92,10 @@ int swtllp_unwrap(swtp_t *swtp, const swtp_frame_t *frame) {
 }
 
 int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
+    if(!swtp->connected) {
+        return SWTP_ERROR;
+    }
+
     // Check the frame size
     if(size > MAXIMUM_MTU + TUN_HEADER_SIZE) {
         printf("Maximum payload size exceeded. (%lu > %d)\n", size, MAXIMUM_MTU + TUN_HEADER_SIZE);
@@ -209,17 +215,35 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
         // Control frame
         switch((frame->frame.header[0] >> 4) & 0x07) {
             case 0: // SABM
+                printf("> SABM\n");
                 // TODO: What to do when receiving a SABM if the connection was already established?
                 break;
 
             case 1: // DISC
+                printf("> DISC\n");
                 swtp->connected = false;
+                
+                if(swtp->disconnectCallback) {
+                    swtp->disconnectCallback(swtp, SWTP_DISCONNECTREASON_DISC);
+                }
                 // TODO: Stop all I/O operations
                 break;
 
             case 2: // TEST
+                printf("> TEST\n");
+
+                // Read acknowledgements
+                mtx_lock(&swtp->sendWindowMutex);
+                swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
+                mtx_unlock(&swtp->sendWindowMutex);
+
                 // Send RR
-                return swtp_sendRR(swtp);
+                if(swtp_sendRR(swtp) != SWTP_SUCCESS) {
+                    printf("Failed to send RR in response to TEST.\n");
+                    return SWTP_ERROR;
+                }
+
+                return SWTP_SUCCESS;
 
             case 3: // Unknown, ignore
                 break;
@@ -347,6 +371,38 @@ int swtp_onTimerTick(swtp_t *swtp) {
     time_t currentTime = time(NULL);
 
     mtx_lock(&swtp->sendWindowMutex);
+
+    time_t timeSinceLastPacketReceived = currentTime - swtp->lastReceivedFrameTime;
+
+    if(timeSinceLastPacketReceived >= SWTP_PING_TIMEOUT) {
+        if((timeSinceLastPacketReceived % SWTP_TIMEOUT) == 0) {
+            if(timeSinceLastPacketReceived - SWTP_PING_TIMEOUT >= SWTP_MAXRETRY * SWTP_TIMEOUT) {
+                swtp->connected = false;
+
+                // Break connection due to timeout
+                if(swtp->disconnectCallback) {
+                    swtp->disconnectCallback(swtp, SWTP_DISCONNECTREASON_TIMEOUT);
+                }
+
+                mtx_unlock(&swtp->sendWindowMutex);
+
+                return SWTP_SUCCESS;
+            } else {
+                // Send TEST
+                uint32_t rr = htonl(0xa0000000 | swtp->expectedFrameNumber);
+
+                printf("< TEST %d\n", swtp->expectedFrameNumber);
+
+                if(sendto(swtp->socket, &rr, SWTP_HEADER_SIZE, 0, &swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                    perror("Failed to send TEST");
+
+                    mtx_unlock(&swtp->sendWindowMutex);
+
+                    return SWTP_ERROR;
+                }
+            }
+        }
+    }
     
     printf("Clock tick at %ld. Send Window: (", currentTime);
 

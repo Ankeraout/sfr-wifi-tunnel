@@ -29,6 +29,11 @@
 #define TUN_HEADER_SIZE 4
 #define SWTLLP_HEADER_SIZE 1
 
+enum {
+    SWTP_DISCONNECTREASON_TIMEOUT,
+    SWTP_DISCONNECTREASON_DISC
+};
+
 typedef struct {
     // The size of the frame (header included)
     size_t size;
@@ -50,11 +55,13 @@ struct swtp_s;
 typedef struct swtp_s swtp_t;
 
 typedef void (*swtp_recvCallback_t)(swtp_t *swtp, const void *buffer, size_t size);
+typedef void (*swtp_disconnectCallback_t)(swtp_t *swtp, int reason);
 
 struct swtp_s {
     int socket;
     struct sockaddr socketAddress;
     swtp_recvCallback_t recvCallback;
+    swtp_disconnectCallback_t disconnectCallback;
 
     mtx_t sendWindowMutex;
 

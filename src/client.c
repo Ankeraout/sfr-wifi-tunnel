@@ -143,7 +143,7 @@ int parseCommandLineParameters(int argc, const char **argv) {
 int timerThreadMainLoop(void *arg) {
     UNUSED_PARAMETER(arg);
 
-    while(true) {
+    while(swtp.connected) {
         if(swtp_onTimerTick(&swtp) != SWTP_SUCCESS) {
             break;
         }
@@ -216,6 +216,15 @@ int resolveHostname(const char *hostname, in_addr_t *address) {
     return 0;
 }
 
+void onDisconnect(swtp_t *swtp, int reason) {
+    UNUSED_PARAMETER(swtp);
+    UNUSED_PARAMETER(reason);
+
+    printf("Connection lost.\n");
+
+    exit(0);
+}
+
 int connectToServer() {
     // Open the socket
     clientSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -265,15 +274,14 @@ int connectToServer() {
         return -1;
     }
 
-    swtp.connected = true;
-
     if(swtp_initSendWindow(&swtp, sabmBuffer & 0x00007fff) != SWTP_SUCCESS) {
         perror("SWTP send window initialization failed");
         return -1;
     }
 
-    // Set callback
+    // Set callbacks
     swtp.recvCallback = onFrameReceived;
+    swtp.disconnectCallback = onDisconnect;
 
     printf("Connection established.\n");
 

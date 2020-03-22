@@ -258,6 +258,18 @@ void onDataFrameReceived(swtp_t *swtp, const void *buffer, size_t size) {
     write(tunDevice, buffer, size);
 }
 
+void onDisconnect(swtp_t *swtp, int reason) {
+    mtx_lock(&clientListMutex);
+    
+    int clientId = findClientByData(swtp);
+
+    clientCount--;
+    swtp_destroy(swtp);
+    free(swtp);
+
+    mtx_unlock(&clientListMutex);
+}
+
 /*
     Accepts a client's connection by sending a SABM response, stores the client
     entry in the client table, and return its index in the table. If an error
@@ -294,7 +306,6 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
     }
 
     swtp->lastReceivedFrameTime = time(NULL);
-    swtp->connected = true;
 
     // Send SABM response
     uint32_t response = htonl(0x80000000 | receiveWindowSize);
@@ -306,8 +317,9 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
 
     printf("Accepted %s (recv window size=%d) as #%d\n", inet_ntoa((*(struct sockaddr_in *)socketAddress).sin_addr), swtp->sendWindowSize, freeSlot);
 
-    // Register callback
+    // Register callbacks
     clientList[freeSlot]->recvCallback = onDataFrameReceived;
+    clientList[freeSlot]->disconnectCallback = onDisconnect;
 
     return freeSlot;
 }
