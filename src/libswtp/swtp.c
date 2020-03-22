@@ -195,33 +195,22 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                     printf("> REJ %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
 
                     uint_least16_t rejectedFrameSequenceNumber = ntohs(*(uint16_t *)(frame->frame.header + 2));
-                    
-                    // Compute the amount of missed frames
-                    uint_least16_t missedFrameCount;
 
-                    if(rejectedFrameSequenceNumber < swtp->expectedFrameNumber) {
-                        missedFrameCount = SWTP_MAX_SEQUENCE_NUMBER - swtp->expectedFrameNumber + rejectedFrameSequenceNumber + 1;
-                    } else {
-                        missedFrameCount = rejectedFrameSequenceNumber - swtp->expectedFrameNumber;
-                    }
+                    // Retransmit frames from the lost one
+                    while(swtp_isSentFrameNumberValid(swtp, rejectedFrameSequenceNumber)) {
+                        swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
 
-                    // Ignore multiple (or bad) retransmission requests
-                    if(missedFrameCount <= swtp->sendWindowSize) {
-                        while(swtp_isSentFrameNumberValid(swtp, rejectedFrameSequenceNumber)) {
-                            swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
+                        rejectedFrame->lastSendAttemptTime = time(NULL);
 
-                            rejectedFrame->lastSendAttemptTime = time(NULL);
-
-                            printf("< DATA %d (retransmit due to REJ)\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
-                            
-                            if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
-                                perror("Failed to send data frame after REJ");
-                                return SWTP_ERROR;
-                            }
-
-                            rejectedFrameSequenceNumber++;
-                            rejectedFrameSequenceNumber &= 0x7fff;
+                        printf("< DATA %d (retransmit due to REJ)\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
+                        
+                        if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                            perror("Failed to send data frame after REJ");
+                            return SWTP_ERROR;
                         }
+
+                        rejectedFrameSequenceNumber++;
+                        rejectedFrameSequenceNumber &= 0x7fff;
                     }
                 }
                 break;
@@ -304,8 +293,9 @@ int swtp_onTimerTick(swtp_t *swtp) {
     
     printf("Alarm at %ld. Send Window: (", currentTime);
 
+    bool first = true;
+
     for(int i = 0; i < swtp->sendWindowLength; i++) {
-        static bool first = true;
         uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
 
         printf(first ? "%d (%ld)" : ", %d (%ld)", ntohs(*(uint16_t *)(swtp->sendWindow[sendWindowIndex].frame.header)), swtp->sendWindow[sendWindowIndex].lastSendAttemptTime);
@@ -317,7 +307,7 @@ int swtp_onTimerTick(swtp_t *swtp) {
     // If there are frames in the send window
     for(int i = 0; i < swtp->sendWindowLength; i++) {
         uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
-        time_t timeSinceLastAttempt = swtp->sendWindow[sendWindowIndex].lastSendAttemptTime - currentTime;
+        time_t timeSinceLastAttempt = currentTime - swtp->sendWindow[sendWindowIndex].lastSendAttemptTime;
 
         // If the frame timed out
         if(timeSinceLastAttempt >= SWTP_TIMEOUT) {
