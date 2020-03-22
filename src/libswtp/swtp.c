@@ -8,6 +8,15 @@
 
 #include <libswtp/swtp.h>
 
+#define ETHERTYPE_IPV4 0x0800
+#define ETHERTYPE_IPV6 0x86dd
+#define SWTLLP_SWTCP 0x00
+#define SWTLLP_IPV4 0x01
+#define SWTLLP_IPV6 0x02
+#define MAXIMUM_MTU 1452
+#define TUN_HEADER_SIZE 4
+#define SWTLLP_HEADER_SIZE 1
+
 void swtp_init(swtp_t *swtp, int socket, const struct sockaddr *socketAddress) {
     memset(swtp, 0, sizeof(swtp_t));
 
@@ -40,10 +49,59 @@ void swtp_destroy(swtp_t *swtp) {
     }
 }
 
+int swtllp_encapsulate(swtp_frame_t *outputFrame, const void *inputBuffer, size_t bufferSize) {
+    uint16_t etherType = ntohs(*(uint16_t *)((uint8_t *)inputBuffer + 2));
+
+    if(etherType == ETHERTYPE_IPV4) {
+        outputFrame->frame.payload[0] = SWTLLP_IPV4;
+    } else if(etherType == ETHERTYPE_IPV6) {
+        outputFrame->frame.payload[0] = SWTLLP_IPV6;
+    } else {
+        printf("swtllp_encapsulate(): unknown ethertype value 0x%04x\n", etherType);
+        return SWTP_ERROR;
+    }
+
+    memcpy(outputFrame->frame.payload + SWTLLP_HEADER_SIZE, inputBuffer, bufferSize);
+    outputFrame->size = bufferSize + SWTLLP_HEADER_SIZE;
+
+    return SWTP_SUCCESS;
+}
+
+static inline void swtllp_setEtherTypeAndForward(swtp_t *swtp, const swtp_frame_t *frame, uint8_t *buffer, uint16_t etherType) {
+    memset(buffer, 0, 2);
+    *(uint16_t *)(buffer + 2) = htons(etherType);
+    memcpy(buffer + 4, frame->frame.payload + 1, frame->size - 1);
+
+    // Call the callback
+    if(swtp->recvCallback) {
+        swtp->recvCallback(swtp, frame->frame.payload, frame->size - SWTP_HEADER_SIZE);
+    }
+}
+
+int swtllp_unwrap(swtp_t *swtp, const swtp_frame_t *frame) {
+    uint8_t buffer[MAXIMUM_MTU + TUN_HEADER_SIZE];
+    
+    switch(frame->frame.payload[0]) {
+        case SWTLLP_IPV4:
+            swtllp_setEtherTypeAndForward(swtp, frame, buffer, ETHERTYPE_IPV4);
+            break;
+
+        case SWTLLP_IPV6:
+            swtllp_setEtherTypeAndForward(swtp, frame, buffer, ETHERTYPE_IPV6);
+            break;
+
+        default:
+            // Ignore unknown SWTLLP header value
+            break;
+    }
+
+    return SWTP_SUCCESS;
+}
+
 int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     // Check the frame size
-    if(size > SWTP_MAX_PAYLOAD_SIZE) {
-        printf("Maximum payload size exceeded. (%lu > %d)\n", size, SWTP_MAX_PAYLOAD_SIZE);
+    if(size > MAXIMUM_MTU + TUN_HEADER_SIZE) {
+        printf("Maximum payload size exceeded. (%lu > %d)\n", size, MAXIMUM_MTU + TUN_HEADER_SIZE);
         return SWTP_ERROR;
     }
 
@@ -64,9 +122,11 @@ int swtp_sendDataFrame(swtp_t *swtp, const void *buffer, size_t size) {
     // Reserve a slot in the send window
     swtp->sendWindowLength++;
 
-    // Copy the payload of the frame to the send window
-    memcpy(swtp->sendWindow[sendWindowIndex].frame.payload, buffer, size);
-    swtp->sendWindow[sendWindowIndex].size = size + SWTP_HEADER_SIZE;
+    if(swtllp_encapsulate(&swtp->sendWindow[sendWindowIndex], buffer, size) == SWTP_ERROR) {
+        mtx_unlock(&swtp->sendWindowMutex);
+        printf("SWTLLP encapsulation failed.\n");
+        return SWTP_ERROR;
+    }
     
     // Set the sequence numbers in the buffer
     memcpy(swtp->sendWindow[sendWindowIndex].frame.header, &sendSequenceNumber, 2);
@@ -181,6 +241,10 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
                     rejectedFrame->lastSendAttemptTime = time(NULL);
                     
+                    // Update expected sequence number
+                    uint_least16_t receiveSequenceNumber = htons(swtp->expectedFrameNumber);
+                    memcpy(rejectedFrame->frame.header + 2, &receiveSequenceNumber, 2);
+                    
                     printf("< DATA %d (retransmit due to SREJ)\n", ntohs(*(uint16_t *)(rejectedFrame->frame.header + 2)));
 
                     if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
@@ -201,6 +265,10 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                         swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
 
                         rejectedFrame->lastSendAttemptTime = time(NULL);
+                    
+                        // Update expected sequence number
+                        uint_least16_t receiveSequenceNumber = htons(swtp->expectedFrameNumber);
+                        memcpy(rejectedFrame->frame.header + 2, &receiveSequenceNumber, 2);
 
                         printf("< DATA %d (retransmit due to REJ)\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
                         
@@ -266,11 +334,9 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
             // Acknowledge the frame
             swtp_sendRR(swtp);
-
-            // Call the callback
-            if(swtp->recvCallback) {
-                swtp->recvCallback(swtp, frame->frame.payload, frame->size - SWTP_HEADER_SIZE);
-            }
+            
+            // Pass frame to SWTLLP
+            swtllp_unwrap(swtp, frame);
         }
 
         // Read acknowledgements
