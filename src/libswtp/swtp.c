@@ -284,6 +284,11 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
             }
         }
 
+        // Read acknowledgements
+        mtx_lock(&swtp->sendWindowMutex);
+        swtp_acknowledgeSentFrame(swtp, ntohs(*(uint16_t *)(frame->frame.header + 2)));
+        mtx_unlock(&swtp->sendWindowMutex);
+
         // TODO: release lock
     }
 
@@ -299,18 +304,17 @@ int swtp_onTimerTick(swtp_t *swtp) {
     
     printf("Alarm at %ld. Send Window: (", currentTime);
 
-    for(int i = 0; i < swtp->sendWindowLength - 1; i++) {
+    for(int i = 0; i < swtp->sendWindowLength; i++) {
         static bool first = true;
         uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
 
         printf(first ? "%d (%ld)" : ", %d (%ld)", ntohs(*(uint16_t *)(swtp->sendWindow[sendWindowIndex].frame.header)), swtp->sendWindow[sendWindowIndex].lastSendAttemptTime);
+        first = false;
     }
 
     printf(")\n");
 
     // If there are frames in the send window
-
-    // BAD retransmission: indexing sendWindow from 0 ? WTF. TODO: replace this by i+swtp->sendWindowStartIndex.
     for(int i = 0; i < swtp->sendWindowLength; i++) {
         uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
         time_t timeSinceLastAttempt = swtp->sendWindow[sendWindowIndex].lastSendAttemptTime - currentTime;
