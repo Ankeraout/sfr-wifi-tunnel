@@ -243,8 +243,6 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                     return SWTP_ERROR;
                 }
 
-                return SWTP_SUCCESS;
-
             case 3: // Unknown, ignore
                 break;
             
