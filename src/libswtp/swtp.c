@@ -291,7 +291,7 @@ int swtp_onTimerTick(swtp_t *swtp) {
         static bool first = true;
         uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
 
-        printf(first ? "%d (%ld)" : ", %d (%ld)", ntohs(*(uint16_t *)(swtp->sendWindow[i].frame.header)), swtp->sendWindow[i].lastSendAttemptTime);
+        printf(first ? "%d (%ld)" : ", %d (%ld)", ntohs(*(uint16_t *)(swtp->sendWindow[sendWindowIndex].frame.header)), swtp->sendWindow[sendWindowIndex].lastSendAttemptTime);
     }
 
     printf(")\n");
