@@ -291,7 +291,7 @@ int swtp_onTimerTick(swtp_t *swtp) {
 
     mtx_lock(&swtp->sendWindowMutex);
     
-    printf("Alarm at %ld. Send Window: (", currentTime);
+    printf("Clock tick at %ld. Send Window: (", currentTime);
 
     bool first = true;
 

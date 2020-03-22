@@ -13,17 +13,17 @@
 #include <net/if.h>
 #include <sys/select.h>
 #include <signal.h>
+#include <netdb.h>
 
-// TODO: implement concurrency
+#define MAX_HOSTNAME_LENGTH 256
 
-#define MAX_RECEIVE_WINDOW_SIZE 8
-#define READTIMEOUT_TIMED_OUT 1
-#define READTIMEOUT_READ 0
-#define READTIMEOUT_IO_ERROR -1
+char serverHostname[MAX_HOSTNAME_LENGTH + 1];
+int serverPort = SWTP_PORT;
 
 int tunDevice;
 char tunDeviceName[16];
 int clientSocket;
+int receiveWindowSize;
 swtp_t swtp;
 mtx_t swtp_mutex;
 thrd_t tunDeviceReaderThread;
@@ -33,8 +33,14 @@ int connectToServer();
 int tunReaderMainLoop(void *arg);
 int timerThreadMainLoop(void *arg);
 int mainLoop();
+int parseCommandLineParameters(int argc, const char **argv);
 
-int main() {
+int main(int argc, const char **argv) {
+    if(parseCommandLineParameters(argc, argv)) {
+        printf("Failed to parse command-line parameters.\n");
+        return EXIT_FAILURE;
+    }
+
     tunDevice = libtun_open(tunDeviceName);
 
     // Connect to the server
@@ -64,6 +70,74 @@ int main() {
     }
 
     return mainLoop();
+}
+
+int parseCommandLineParameters(int argc, const char **argv) {
+    bool flag_windowSize = false;
+    bool flag_serverHostname = false;
+    bool flag_serverPort = false;
+    
+    bool flag_windowSize_set = false;
+    bool flag_serverHostname_set = false;
+
+    for(int i = 1; i < argc; i++) {
+        if(flag_windowSize) {
+            flag_windowSize = false;
+            
+            if(sscanf(argv[i], "%d", &receiveWindowSize) == EOF) {
+                printf("Failed to parse argument value to --receive-window-size.\n");
+                return 1;
+            }
+
+            if(receiveWindowSize <= 0 || receiveWindowSize > SWTP_MAX_WINDOW_SIZE) {
+                printf("Invalid value for --receive-window-size. Expected an integer between 1 and %d included.\n", SWTP_MAX_WINDOW_SIZE);
+                return 1;
+            }
+
+            flag_windowSize_set = true;
+        } else if(flag_serverHostname) {
+            flag_serverHostname = false;
+            strncpy(serverHostname, argv[i], MAX_HOSTNAME_LENGTH);
+            flag_serverHostname_set = true;
+        } else if(flag_serverPort) {
+            flag_serverPort = false;
+
+            sscanf(argv[i], "%d", &serverPort);
+
+            if(serverPort < 0 || serverPort > 65535) {
+                printf("Invalid value for --server-port. Expected an integer between 0 and 65535 included.\n");
+                return 1;
+            }
+        } else if(strcmp(argv[i], "--receive-window-size") == 0) {
+            flag_windowSize = true;
+        } else if(strcmp(argv[i], "--hostname") == 0) {
+            flag_serverHostname = true;
+        } else if(strcmp(argv[i], "--port") == 0) {
+            flag_serverPort = true;
+        } else {
+            printf("Unknown argument \"%s\".", argv[i]);
+            return 1;
+        }
+    }
+
+    if(flag_windowSize) {
+        printf("--receive-window-size expected an integer value.\n");
+        return 1;
+    } else if(flag_serverHostname) {
+        printf("--hostname expected a hostname.\n");
+        return 1;
+    } else if(flag_serverPort) {
+        printf("--port expected an integer value.\n");
+        return 1;
+    } else if(!flag_windowSize_set) {
+        printf("--receive-window-size was not set.\n");
+        return 1;
+    } else if(!flag_serverHostname_set) {
+        printf("--hostname was not set.\n");
+        return 1;
+    }
+
+    return 0;
 }
 
 int timerThreadMainLoop(void *arg) {
@@ -130,6 +204,18 @@ void onFrameReceived(swtp_t *swtp, const void *buffer, size_t size) {
     write(tunDevice, buffer, size);
 }
 
+int resolveHostname(const char *hostname, in_addr_t *address) {
+    struct hostent *hostEntry = gethostbyname(hostname);
+
+    if(hostEntry == NULL) {
+        return -1;
+    }
+
+    memcpy(address, hostEntry->h_addr_list[0], sizeof(in_addr_t));
+
+    return 0;
+}
+
 int connectToServer() {
     // Open the socket
     clientSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -141,12 +227,11 @@ int connectToServer() {
     struct sockaddr_in serverAddress;
     memset(&serverAddress, 0, sizeof(struct sockaddr_in));
 
-    serverAddress.sin_addr.s_addr = htonl(
-        (192 << 24)
-        | (168 << 16)
-        | (1 << 8)
-        | 20
-    );
+    if(resolveHostname(serverHostname, &serverAddress.sin_addr.s_addr)) {
+        return -1;
+    }
+
+    printf("Resolved %s to %s\n", serverHostname, inet_ntoa(serverAddress.sin_addr));
 
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(5228);
@@ -155,7 +240,9 @@ int connectToServer() {
     swtp_init(&swtp, clientSocket, (const struct sockaddr *)&serverAddress);
 
     // Send a SABM packet with the desired window size
-    uint32_t sabmBuffer = htonl(0x80000000 | MAX_RECEIVE_WINDOW_SIZE);
+    uint32_t sabmBuffer = htonl(0x80000000 | receiveWindowSize);
+
+    printf("Connecting to %s:%d...\n", inet_ntoa(*(struct in_addr *)&serverAddress.sin_addr), serverPort);
 
     if(sendto(clientSocket, &sabmBuffer, 4, 0, &swtp.socketAddress, sizeof(struct sockaddr_in)) < 0) {
         return -1;

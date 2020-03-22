@@ -13,11 +13,11 @@
 #include <net/if.h>
 #include <signal.h>
 
-#define MAX_CLIENTS 2
-#define RECV_WINDOW 8
-
 // Contains the client list
-swtp_t *clientList[MAX_CLIENTS];
+swtp_t **clientList;
+
+// Contains the maximum number of clients simultaneously connected.
+int clientListSize;
 
 // Contains the current number of clients
 int clientCount = 0;
@@ -31,6 +31,10 @@ int tunDevice;
 // Contains the tun device name
 char tunDeviceName[16];
 
+// Contains the maximum size of the receive window of the server.
+int receiveWindowSize;
+
+int parseCommandLineParameters(int argc, const char **argv);
 int createServerSocket();
 void mainServerLoop();
 int tunReaderMainLoop(void *arg);
@@ -40,9 +44,18 @@ mtx_t clientListMutex;
 thrd_t tunDeviceReaderThread;
 thrd_t timerThread;
 
-int main(int argc, char **argv) {
-    UNUSED_PARAMETER(argc);
-    UNUSED_PARAMETER(argv);
+int main(int argc, const char **argv) {
+    if(parseCommandLineParameters(argc, argv)) {
+        printf("Failed to parse command-line parameters.\n");
+        return EXIT_FAILURE;
+    }
+
+    clientList = malloc(sizeof(swtp_t *) * clientListSize);
+
+    if(!clientList) {
+        perror("Failed to allocate memory for the client list");
+        return EXIT_FAILURE;
+    }
 
     tunDevice = libtun_open(tunDeviceName);
 
@@ -58,7 +71,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    memset(clientList, 0, sizeof(clientList));
+    memset(clientList, 0, sizeof(swtp_t *) * clientListSize);
     clientCount = 0;
 
     if(mtx_init(&clientListMutex, mtx_plain) == thrd_error) {
@@ -85,11 +98,74 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+int parseCommandLineParameters(int argc, const char **argv) {
+    bool flag_maxClients = false;
+    bool flag_windowSize = false;
+    
+    bool flag_maxClients_set = false;
+    bool flag_windowSize_set = false;
+
+    for(int i = 1; i < argc; i++) {
+        if(flag_maxClients) {
+            flag_maxClients = false;
+            
+            if(sscanf(argv[i], "%d", &clientListSize) == EOF) {
+                printf("Failed to parse argument value to --max-clients.\n");
+                return 1;
+            }
+
+            if(clientListSize <= 0) {
+                printf("Invalid value for --max-clients. Expected a strictly positive integer.\n");
+                return 1;
+            }
+
+            flag_maxClients_set = true;
+        } else if(flag_windowSize) {
+            flag_windowSize = false;
+            
+            if(sscanf(argv[i], "%d", &receiveWindowSize) == EOF) {
+                printf("Failed to parse argument value to --receive-window-size.\n");
+                return 1;
+            }
+
+            if(receiveWindowSize <= 0 || receiveWindowSize > SWTP_MAX_WINDOW_SIZE) {
+                printf("Invalid value for --receive-window-size. Expected an integer between 1 and %d included.\n", SWTP_MAX_WINDOW_SIZE);
+                return 1;
+            }
+
+            flag_windowSize_set = true;
+        } else if(strcmp(argv[i], "--max-clients") == 0) {
+            flag_maxClients = true;
+        } else if(strcmp(argv[i], "--receive-window-size") == 0) {
+            flag_windowSize = true;
+        } else {
+            printf("Unknown argument \"%s\".", argv[i]);
+            return 1;
+        }
+    }
+
+    if(flag_maxClients) {
+        printf("--max-clients expected an integer value.\n");
+        return 1;
+    } else if(flag_windowSize) {
+        printf("--receive-window-size expected an integer value.\n");
+        return 1;
+    } else if(!flag_maxClients_set) {
+        printf("--max-clients was not set.\n");
+        return 1;
+    } else if(!flag_windowSize_set) {
+        printf("--receive-window-size was not set.\n");
+        return 1;
+    }
+
+    return 0;
+}
+
 int timerThreadMainLoop(void *arg) {
     UNUSED_PARAMETER(arg);
 
     while(true) {
-        for(int i = 0; i < MAX_CLIENTS; i++) {
+        for(int i = 0; i < clientListSize; i++) {
             if(clientList[i]) {
                 if(swtp_onTimerTick(clientList[i]) != SWTP_SUCCESS) {
                     // TODO: what to do when an error occurs?
@@ -117,7 +193,7 @@ int tunReaderMainLoop(void *arg) {
 
         mtx_lock(&clientListMutex);
 
-        for(int i = 0; i < MAX_CLIENTS; i++) {
+        for(int i = 0; i < clientListSize; i++) {
             if(clientList[i]) {
                 swtp_sendDataFrame(clientList[i], buffer, packetSize);
             }
@@ -152,7 +228,7 @@ int createServerSocket() {
     list. If the client exists in the list, return its index. Else return -1.
 */
 int findClientBySocketAddress(struct sockaddr_in *socketAddress, socklen_t socketAddressLength) {
-    for(int i = 0; i < MAX_CLIENTS; i++) {
+    for(int i = 0; i < clientListSize; i++) {
         if(clientList[i]) {
             if(memcmp(socketAddress, &clientList[i]->socketAddress, socketAddressLength) == 0) {
                 return i;
@@ -168,7 +244,7 @@ int findClientBySocketAddress(struct sockaddr_in *socketAddress, socklen_t socke
     client table. If the client does not exist, this function returns -1.
 */
 int findClientByData(swtp_t *client) {
-    for(int i = 0; i < MAX_CLIENTS; i++) {
+    for(int i = 0; i < clientListSize; i++) {
         if(clientList[i] == client) {
             return i;
         }
@@ -189,14 +265,14 @@ void onDataFrameReceived(swtp_t *swtp, const void *buffer, size_t size) {
 */
 int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *frame) {
     // Check if there's enough space in the client table
-    if(clientCount >= MAX_CLIENTS) {
+    if(clientCount >= clientListSize) {
         return -1;
     }
 
     // Find a free slot for the client
     int freeSlot;
 
-    for(freeSlot = 0; freeSlot < MAX_CLIENTS; freeSlot++) {
+    for(freeSlot = 0; freeSlot < clientListSize; freeSlot++) {
         if(!clientList[freeSlot]) {
             break;
         }
@@ -221,7 +297,7 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
     swtp->connected = true;
 
     // Send SABM response
-    uint32_t response = htonl(0x80000000 | RECV_WINDOW);
+    uint32_t response = htonl(0x80000000 | receiveWindowSize);
     sendto(serverSocket, &response, 4, 0, socketAddress, sizeof(struct sockaddr_in));
 
     // Register the client in the client list
@@ -268,7 +344,7 @@ void mainServerLoop() {
         // If the client was not found
         if(clientIndex == -1) {
             // If there is no slot remaining
-            if(clientCount < MAX_CLIENTS) {
+            if(clientCount < clientListSize) {
                 // If the packet is a SABM packet
                 if((buffer.frame.header[0] & 0xf0) == 0x80) {
                     // Accept the client
