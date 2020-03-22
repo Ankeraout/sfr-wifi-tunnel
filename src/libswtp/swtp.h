@@ -20,6 +20,15 @@
 #define SWTP_SEQUENCE_NUMBER_COUNT 32768
 #define SWTP_MAX_WINDOW_SIZE 16384
 
+#define ETHERTYPE_IPV4 0x0800
+#define ETHERTYPE_IPV6 0x86dd
+#define SWTLLP_SWTCP 0x00
+#define SWTLLP_IPV4 0x01
+#define SWTLLP_IPV6 0x02
+#define MAXIMUM_MTU 1400
+#define TUN_HEADER_SIZE 4
+#define SWTLLP_HEADER_SIZE 1
+
 typedef struct {
     // The size of the frame (header included)
     size_t size;

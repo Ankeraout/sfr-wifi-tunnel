@@ -8,15 +8,6 @@
 
 #include <libswtp/swtp.h>
 
-#define ETHERTYPE_IPV4 0x0800
-#define ETHERTYPE_IPV6 0x86dd
-#define SWTLLP_SWTCP 0x00
-#define SWTLLP_IPV4 0x01
-#define SWTLLP_IPV6 0x02
-#define MAXIMUM_MTU 1452
-#define TUN_HEADER_SIZE 4
-#define SWTLLP_HEADER_SIZE 1
-
 void swtp_init(swtp_t *swtp, int socket, const struct sockaddr *socketAddress) {
     memset(swtp, 0, sizeof(swtp_t));
 
@@ -70,11 +61,11 @@ int swtllp_encapsulate(swtp_frame_t *outputFrame, const void *inputBuffer, size_
 static inline void swtllp_setEtherTypeAndForward(swtp_t *swtp, const swtp_frame_t *frame, uint8_t *buffer, uint16_t etherType) {
     memset(buffer, 0, 2);
     *(uint16_t *)(buffer + 2) = htons(etherType);
-    memcpy(buffer + 4, frame->frame.payload + 1, frame->size - 1);
+    memcpy(buffer + 4, frame->frame.payload + SWTLLP_HEADER_SIZE, frame->size - SWTLLP_HEADER_SIZE - SWTP_HEADER_SIZE);
 
     // Call the callback
     if(swtp->recvCallback) {
-        swtp->recvCallback(swtp, frame->frame.payload, frame->size - SWTP_HEADER_SIZE);
+        swtp->recvCallback(swtp, buffer, frame->size - SWTP_HEADER_SIZE - SWTLLP_HEADER_SIZE + TUN_HEADER_SIZE);
     }
 }
 
