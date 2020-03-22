@@ -195,21 +195,33 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
                     printf("> REJ %d\n", ntohs(*(uint16_t *)(frame->frame.header + 2)));
 
                     uint_least16_t rejectedFrameSequenceNumber = ntohs(*(uint16_t *)(frame->frame.header + 2));
+                    
+                    // Compute the amount of missed frames
+                    uint_least16_t missedFrameCount;
 
-                    while(swtp_isSentFrameNumberValid(swtp, rejectedFrameSequenceNumber)) {
-                        swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
+                    if(rejectedFrameSequenceNumber < swtp->expectedFrameNumber) {
+                        missedFrameCount = SWTP_MAX_SEQUENCE_NUMBER - swtp->expectedFrameNumber + rejectedFrameSequenceNumber + 1;
+                    } else {
+                        missedFrameCount = rejectedFrameSequenceNumber - swtp->expectedFrameNumber;
+                    }
 
-                        rejectedFrame->lastSendAttemptTime = time(NULL);
+                    // Ignore multiple (or bad) retransmission requests
+                    if(missedFrameCount <= swtp->sendWindowSize) {
+                        while(swtp_isSentFrameNumberValid(swtp, rejectedFrameSequenceNumber)) {
+                            swtp_frame_t *rejectedFrame = swtp_getSentFrame(swtp, rejectedFrameSequenceNumber);
 
-                        printf("< DATA %d (retransmit due to REJ)\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
-                        
-                        if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
-                            perror("Failed to send data frame after REJ");
-                            return SWTP_ERROR;
+                            rejectedFrame->lastSendAttemptTime = time(NULL);
+
+                            printf("< DATA %d (retransmit due to REJ)\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
+                            
+                            if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+                                perror("Failed to send data frame after REJ");
+                                return SWTP_ERROR;
+                            }
+
+                            rejectedFrameSequenceNumber++;
+                            rejectedFrameSequenceNumber &= 0x7fff;
                         }
-
-                        rejectedFrameSequenceNumber++;
-                        rejectedFrameSequenceNumber &= 0x7fff;
                     }
                 }
                 break;
