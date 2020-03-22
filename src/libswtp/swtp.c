@@ -61,7 +61,7 @@ int swtllp_encapsulate(swtp_frame_t *outputFrame, const void *inputBuffer, size_
         return SWTP_ERROR;
     }
 
-    memcpy(outputFrame->frame.payload + SWTLLP_HEADER_SIZE, inputBuffer, bufferSize);
+    memcpy(outputFrame->frame.payload + SWTLLP_HEADER_SIZE, (const uint8_t *)inputBuffer + TUN_HEADER_SIZE, bufferSize - TUN_HEADER_SIZE);
     outputFrame->size = bufferSize + SWTLLP_HEADER_SIZE;
 
     return SWTP_SUCCESS;
