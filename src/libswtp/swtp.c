@@ -181,7 +181,7 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
                     rejectedFrame->lastSendAttemptTime = time(NULL);
                     
-                    printf("< DATA %d\n", ntohs(*(uint16_t *)(rejectedFrame->frame.header + 2)));
+                    printf("< DATA %d (retransmit due to SREJ)\n", ntohs(*(uint16_t *)(rejectedFrame->frame.header + 2)));
 
                     if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
                         perror("Failed to send data frame after SREJ");
@@ -201,7 +201,7 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 
                         rejectedFrame->lastSendAttemptTime = time(NULL);
 
-                        printf("< DATA %d\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
+                        printf("< DATA %d (retransmit due to REJ)\n", ntohs(*(uint16_t *)rejectedFrame->frame.header));
                         
                         if(sendto(swtp->socket, (const void *)&rejectedFrame->frame, rejectedFrame->size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
                             perror("Failed to send data frame after REJ");
@@ -284,19 +284,33 @@ int swtp_onTimerTick(swtp_t *swtp) {
     time_t currentTime = time(NULL);
 
     mtx_lock(&swtp->sendWindowMutex);
+    
+    printf("Alarm at %ld. Send Window: (", currentTime);
+
+    for(int i = 0; i < swtp->sendWindowLength - 1; i++) {
+        static bool first = true;
+        uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
+
+        printf(first ? "%d (%ld)" : ", %d (%ld)", ntohs(*(uint16_t *)(swtp->sendWindow[i].frame.header)), swtp->sendWindow[i].lastSendAttemptTime);
+    }
+
+    printf(")\n");
 
     // If there are frames in the send window
+
+    // BAD retransmission: indexing sendWindow from 0 ? WTF. TODO: replace this by i+swtp->sendWindowStartIndex.
     for(int i = 0; i < swtp->sendWindowLength; i++) {
-        time_t timeSinceLastAttempt = swtp->sendWindow[i].lastSendAttemptTime - currentTime;
+        uint_least16_t sendWindowIndex = (swtp->sendWindowStartIndex + i) % swtp->sendWindowSize;
+        time_t timeSinceLastAttempt = swtp->sendWindow[sendWindowIndex].lastSendAttemptTime - currentTime;
 
         // If the frame timed out
         if(timeSinceLastAttempt >= SWTP_TIMEOUT) {
             // Retransmit the frame
-            swtp->sendWindow[i].lastSendAttemptTime = currentTime;
+            swtp->sendWindow[sendWindowIndex].lastSendAttemptTime = currentTime;
             
-            printf("< DATA %d\n", ntohs(*(uint16_t *)(swtp->sendWindow[i].frame.header + 2)));
+            printf("< DATA %d (retransmit due to timeout)\n", ntohs(*(uint16_t *)(swtp->sendWindow[sendWindowIndex].frame.header)));
 
-            if(sendto(swtp->socket, (const void *)&swtp->sendWindow[i].frame, swtp->sendWindow[i].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
+            if(sendto(swtp->socket, (const void *)&swtp->sendWindow[sendWindowIndex].frame, swtp->sendWindow[sendWindowIndex].size, 0, (struct sockaddr *)&swtp->socketAddress, sizeof(struct sockaddr_in)) < 0) {
                 mtx_unlock(&swtp->sendWindowMutex);
                 perror("Failed to send data frame after timeout");
                 return SWTP_ERROR;
