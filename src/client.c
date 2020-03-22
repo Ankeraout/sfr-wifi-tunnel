@@ -27,11 +27,12 @@ int clientSocket;
 swtp_t swtp;
 mtx_t swtp_mutex;
 thrd_t tunDeviceReaderThread;
+thrd_t timerThread;
 
 int connectToServer();
 int tunReaderMainLoop(void *arg);
+int timerThreadMainLoop(void *arg);
 int mainLoop();
-void alarmHandler(int signalNumber);
 
 int main() {
     tunDevice = libtun_open(tunDeviceName);
@@ -53,23 +54,30 @@ int main() {
     }
 
     if(thrd_create(&tunDeviceReaderThread, tunReaderMainLoop, NULL)) {
-        perror("Failed to create thread");
+        perror("Failed to create tun device reader thread");
         return EXIT_FAILURE;
     }
 
-    // Prepare alarm timeout
-    signal(SIGALRM, alarmHandler);
-    alarm(1);
+    if(thrd_create(&timerThread, timerThreadMainLoop, NULL)) {
+        perror("Failed to create timer thread");
+        return EXIT_FAILURE;
+    }
 
     return mainLoop();
 }
 
-void alarmHandler(int signalNumber) {
-    UNUSED_PARAMETER(signalNumber);
+int timerThreadMainLoop(void *arg) {
+    UNUSED_PARAMETER(arg);
 
-    swtp_onTimerTick(&swtp);
+    while(true) {
+        if(swtp_onTimerTick(&swtp) != SWTP_SUCCESS) {
+            break;
+        }
 
-    alarm(1);
+        sleep(1);
+    }
+
+    return 0;
 }
 
 int mainLoop() {

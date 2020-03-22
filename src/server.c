@@ -34,10 +34,11 @@ char tunDeviceName[16];
 int createServerSocket();
 void mainServerLoop();
 int tunReaderMainLoop(void *arg);
-void alarmHandler(int signalNumber);
+int timerThreadMainLoop(void *arg);
 
 mtx_t clientListMutex;
 thrd_t tunDeviceReaderThread;
+thrd_t timerThread;
 
 int main(int argc, char **argv) {
     UNUSED_PARAMETER(argc);
@@ -70,9 +71,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Prepare alarm timeout
-    signal(SIGALRM, alarmHandler);
-    alarm(1);
+    if(thrd_create(&timerThread, timerThreadMainLoop, NULL)) {
+        perror("Failed to create timer thread");
+        return EXIT_FAILURE;
+    }
 
     printf("Ready.\n");
 
@@ -83,16 +85,22 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-void alarmHandler(int signalNumber) {
-    UNUSED_PARAMETER(signalNumber);
+int timerThreadMainLoop(void *arg) {
+    UNUSED_PARAMETER(arg);
 
-    for(int i = 0; i < MAX_CLIENTS; i++) {
-        if(clientList[i]) {
-            swtp_onTimerTick(clientList[i]);
+    while(true) {
+        for(int i = 0; i < MAX_CLIENTS; i++) {
+            if(clientList[i]) {
+                if(swtp_onTimerTick(clientList[i]) != SWTP_SUCCESS) {
+                    // TODO: what to do when an error occurs?
+                }
+            }
         }
+        
+        sleep(1);
     }
 
-    alarm(1);
+    return 0;
 }
 
 int tunReaderMainLoop(void *arg) {
