@@ -264,10 +264,14 @@ void onDisconnect(swtp_t *swtp, int reason) {
     int clientId = findClientByData(swtp);
 
     clientCount--;
+    clientList[clientId] = NULL;
+    
     swtp_destroy(swtp);
     free(swtp);
 
     mtx_unlock(&clientListMutex);
+
+    printf("Client #0 disconnected (reason=%d)\n", reason);
 }
 
 /*

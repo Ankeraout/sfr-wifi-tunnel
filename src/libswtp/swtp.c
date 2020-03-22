@@ -368,6 +368,10 @@ int swtp_onFrameReceived(swtp_t *swtp, const swtp_frame_t *frame) {
 }
 
 int swtp_onTimerTick(swtp_t *swtp) {
+    if(!swtp->connected) {
+        return SWTP_ERROR;
+    }
+
     time_t currentTime = time(NULL);
 
     mtx_lock(&swtp->sendWindowMutex);
