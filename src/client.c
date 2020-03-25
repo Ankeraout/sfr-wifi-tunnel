@@ -296,7 +296,7 @@ int connectToServer() {
     int sendWindowSize = sabmBuffer & 0x00007fff;
 
     if(maxSendWindowSize > 0) {
-        if(sendWindowSize < maxSendWindowSize) {
+        if(sendWindowSize > maxSendWindowSize) {
             printf("Reducing send window size from %d to %d.\n", sendWindowSize, maxSendWindowSize);
             sendWindowSize = maxSendWindowSize;
         }
