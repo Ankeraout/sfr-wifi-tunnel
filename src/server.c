@@ -129,12 +129,12 @@ int parseCommandLineParameters(int argc, const char **argv) {
             flag_receiveWindowSize = false;
             
             if(sscanf(argv[i], "%d", &receiveWindowSize) == EOF) {
-                printf("Failed to parse argument value to --receive-window-size.\n");
+                printf("Failed to parse argument value to --max-recv-window-size.\n");
                 return 1;
             }
 
             if(receiveWindowSize <= 0 || receiveWindowSize > SWTP_MAX_WINDOW_SIZE) {
-                printf("Invalid value for --receive-window-size. Expected an integer between 1 and %d included.\n", SWTP_MAX_WINDOW_SIZE);
+                printf("Invalid value for --max-recv-window-size. Expected an integer between 1 and %d included.\n", SWTP_MAX_WINDOW_SIZE);
                 return 1;
             }
 
@@ -167,7 +167,7 @@ int parseCommandLineParameters(int argc, const char **argv) {
         printf("--max-clients expected an integer value.\n");
         return 1;
     } else if(flag_receiveWindowSize) {
-        printf("--receive-window-size expected an integer value.\n");
+        printf("--max-recv-window-size expected an integer value.\n");
         return 1;
     } else if(flag_maxSendWindowSize) {
         printf("--max-send-window-size expected an integer value.\n");
@@ -176,7 +176,7 @@ int parseCommandLineParameters(int argc, const char **argv) {
         printf("--max-clients was not set.\n");
         return 1;
     } else if(!flag_windowSize_set) {
-        printf("--receive-window-size was not set.\n");
+        printf("--max-recv-window-size was not set.\n");
         return 1;
     }
 
