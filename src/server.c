@@ -153,7 +153,7 @@ int parseCommandLineParameters(int argc, const char **argv) {
             }
         } else if(strcmp(argv[i], "--max-clients") == 0) {
             flag_maxClients = true;
-        } else if(strcmp(argv[i], "--receive-window-size") == 0) {
+        } else if(strcmp(argv[i], "--max-recv-window-size") == 0) {
             flag_receiveWindowSize = true;
         } else if(strcmp(argv[i], "--max-send-window-size") == 0) {
             flag_maxSendWindowSize = true;
