@@ -34,6 +34,10 @@ char tunDeviceName[16];
 // Contains the maximum size of the receive window of the server.
 int receiveWindowSize;
 
+// Contains the maximum size of the send window of the server. Any value <= 0
+// means unspecified.
+int sendWindowMaxSize = 0;
+
 int parseCommandLineParameters(int argc, const char **argv);
 int createServerSocket();
 void mainServerLoop();
@@ -100,7 +104,8 @@ int main(int argc, const char **argv) {
 
 int parseCommandLineParameters(int argc, const char **argv) {
     bool flag_maxClients = false;
-    bool flag_windowSize = false;
+    bool flag_receiveWindowSize = false;
+    bool flag_maxSendWindowSize = false;
     
     bool flag_maxClients_set = false;
     bool flag_windowSize_set = false;
@@ -120,8 +125,8 @@ int parseCommandLineParameters(int argc, const char **argv) {
             }
 
             flag_maxClients_set = true;
-        } else if(flag_windowSize) {
-            flag_windowSize = false;
+        } else if(flag_receiveWindowSize) {
+            flag_receiveWindowSize = false;
             
             if(sscanf(argv[i], "%d", &receiveWindowSize) == EOF) {
                 printf("Failed to parse argument value to --receive-window-size.\n");
@@ -134,10 +139,24 @@ int parseCommandLineParameters(int argc, const char **argv) {
             }
 
             flag_windowSize_set = true;
+        } else if(flag_maxSendWindowSize) {
+            flag_maxSendWindowSize = false;
+
+            if(sscanf(argv[i], "%d", &sendWindowMaxSize) == EOF) {
+                printf("Failed to parse argument value to --max-send-window-size.\n");
+                return 1;
+            }
+
+            if(sendWindowMaxSize <= 0 || sendWindowMaxSize > SWTP_MAX_WINDOW_SIZE) {
+                printf("Invalid value for --max-send-window-size. Expected an integer between 1 and %d included.\n", SWTP_MAX_WINDOW_SIZE);
+                return 1;
+            }
         } else if(strcmp(argv[i], "--max-clients") == 0) {
             flag_maxClients = true;
         } else if(strcmp(argv[i], "--receive-window-size") == 0) {
-            flag_windowSize = true;
+            flag_receiveWindowSize = true;
+        } else if(strcmp(argv[i], "--max-send-window-size") == 0) {
+            flag_maxSendWindowSize = true;
         } else {
             printf("Unknown argument \"%s\".", argv[i]);
             return 1;
@@ -147,8 +166,11 @@ int parseCommandLineParameters(int argc, const char **argv) {
     if(flag_maxClients) {
         printf("--max-clients expected an integer value.\n");
         return 1;
-    } else if(flag_windowSize) {
+    } else if(flag_receiveWindowSize) {
         printf("--receive-window-size expected an integer value.\n");
+        return 1;
+    } else if(flag_maxSendWindowSize) {
+        printf("--max-send-window-size expected an integer value.\n");
         return 1;
     } else if(!flag_maxClients_set) {
         printf("--max-clients was not set.\n");
@@ -304,7 +326,16 @@ int acceptClientSABM(const struct sockaddr *socketAddress, const swtp_frame_t *f
     // Initialize SWTP structure
     swtp_init(swtp, serverSocket, socketAddress);
 
-    if(swtp_initSendWindow(swtp, ntohs(*((uint16_t *)(frame->frame.header + 2)))) != SWTP_SUCCESS) {
+    int sendWindowSize = ntohs(*((uint16_t *)(frame->frame.header + 2)));
+
+    if(sendWindowMaxSize > 0) {
+        if(sendWindowSize > sendWindowMaxSize) {
+            printf("Reducing client receive window size from %d to %d.\n", sendWindowSize, sendWindowMaxSize);
+            sendWindowSize = sendWindowMaxSize;
+        }
+    }
+
+    if(swtp_initSendWindow(swtp, sendWindowSize) != SWTP_SUCCESS) {
         free(swtp);
         return -1;
     }
