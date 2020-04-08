@@ -58,7 +58,11 @@ RNR  | 1111?????????????rrrrrrrrrrrrrrr
 ```
 
 #### Set Asynchronous Balanced Mode (SABM)
-This command initiates the connection. It contains the Window Size field that indicates the maximum window size allowed on the sender side.
+This command initiates the connection. It contains the Window Size field that indicates the maximum window size allowed on the sender side, which is a data frame count.
+This command is a special one as it also contains a payload which contains (in this order):
+  - The sender's overhead size (IP + UDP + SWTP + SWTLLP + IP headers size) (1 byte, 1-256)
+  - The sender's window size (overheads included) (3 bytes, 1-16777216)
+These values are not zero-based, which means that you need to add 1 to the value in the field.
 
 #### Disconnect (DISC)
 This command indicates that the connection is finished.
