@@ -1,9 +1,0 @@
-@startuml
-
-Client --x Server : TEST(0)
-Client --> Server : TEST(0)
-Server --x Client : ACK(0)
-Client --> Server : TEST(0)
-Server --> Client : ACK(0)
-
-@enduml

@@ -1,9 +1,0 @@
-@startuml
-
-Client --x Server : SABM(128)
-Client --> Server : SABM(128)
-Server --x Client : SABM(512)
-Client --> Server : SABM(128)
-Server --> Client : SABM(512)
-
-@enduml
