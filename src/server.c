@@ -231,10 +231,10 @@ static void receiveLoop() {
 static int tunReadLoop(void *arg) {
     (void)arg;
 
-    uint8_t buffer[SWTP_MAX_PACKET_SIZE];
+    uint8_t buffer[SWTP_MAX_PACKET_SIZE + 4];
 
     while(true) {
-        ssize_t packetSize = read(tunDeviceFd, buffer, SWTP_MAX_PACKET_SIZE);
+        ssize_t packetSize = read(tunDeviceFd, buffer, SWTP_MAX_PACKET_SIZE + 4);
 
         if(packetSize < 0) {
             return 1;
@@ -242,8 +242,13 @@ static int tunReadLoop(void *arg) {
 
         mtx_lock(&clientListMutex);
 
-        for(int i = 0; i < clientListLength; i++) {
-            swtp_send(&clientList[i].pipe, SWTP_PACKETTYPE_TUN, buffer, packetSize);
+        switch(detectPacketType(buffer)) {
+            case SWTP_PACKETTYPE_IPV4: 
+                for(int i = 0; i < clientListLength; i++) {
+                    swtp_send(&clientList[i].pipe, SWTP_PACKETTYPE_IPV4, buffer + 4, packetSize - 4);
+                }
+
+                break;
         }
 
         mtx_unlock(&clientListMutex);
@@ -333,7 +338,16 @@ int swtp_onSendPacket(swtp_pipe_t *pipe, const void *packetBuffer, size_t packet
 }
 
 int swtp_onReceivePacket(swtp_pipe_t *pipe, swtp_packetType_t packetType, const void *packetBuffer, size_t packetSize) {
-    if(packetType == SWTP_PACKETTYPE_TUN) {
-        write(tunDeviceFd, packetBuffer, packetSize);
+    if((swtp_packetType_t)packetType == SWTP_PACKETTYPE_IPV4) {
+        uint8_t buffer[packetSize + 4];
+
+        uint16_t etherType = htons(ETHERTYPE_IPV4);
+
+        memcpy(buffer + 2, &etherType, 2);
+        memcpy(buffer + 4, packetBuffer, packetSize);
+
+        write(tunDeviceFd, buffer, packetSize + 4);
     }
+
+    return 0;
 }

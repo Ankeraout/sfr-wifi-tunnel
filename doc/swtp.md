@@ -29,7 +29,7 @@ Data packets contain 4 main fields:
     sender
 - Packet type: the type of the packet. The following values are defined:
     - 0: SWTCP
-    - 1: IP
+    - 1: IPv4
 - Payload: user-defined
 
 Packet sequence numbers are 15-bit wide, allowing packet numerotation from 0 to

@@ -7,7 +7,8 @@
 
 #include "swtp.h"
 
-#define debug printf
+//#define debug printf
+#define debug //
 
 int swtp_init(swtp_pipe_t *pipe);
 int swtp_onPacketReceived(swtp_pipe_t *pipe, const void *packetBuffer, size_t packetSize);
@@ -29,7 +30,7 @@ int swtp_init(swtp_pipe_t *pipe) {
 
     timespec_get(&currentTime, TIME_UTC);
 
-    pipe->sWndSize = 1;
+    pipe->sWndSize = SWTP_INITIAL_WINDOW_SIZE;
     pipe->sWndStartIndex = 0;
     pipe->sWndStartSequence = 0;
     pipe->sWndNextIndex = 0;

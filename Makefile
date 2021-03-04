@@ -5,11 +5,11 @@ LDFLAGS=-lpthread
 
 BINDIR=bin
 
-SERVER_SOURCES=src/server.c src/tun.c src/swtp.c
+SERVER_SOURCES=src/server.c src/tun.c src/swtp.c src/common.c
 SERVER_OBJECTS=$(SERVER_SOURCES:%.c=%.o)
 SERVER_EXEC=$(BINDIR)/server
 
-CLIENT_SOURCES=src/client.c src/tun.c src/swtp.c
+CLIENT_SOURCES=src/client.c src/tun.c src/swtp.c src/common.c
 CLIENT_OBJECTS=$(CLIENT_SOURCES:%.c=%.o)
 CLIENT_EXEC=$(BINDIR)/client
 
