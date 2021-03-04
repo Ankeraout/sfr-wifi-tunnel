@@ -1,5 +1,5 @@
-#ifndef __COMMON_H_INCLUDED__
-#define __COMMON_H_INCLUDED__
+#ifndef __COMMON_H__
+#define __COMMON_H__
 
 #define UNUSED_PARAMETER(x) ((void)x)
 

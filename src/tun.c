@@ -6,7 +6,7 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 
-int libtun_open(char *deviceName) {
+int openTunDevice(char *deviceName) {
     struct ifreq ifr;
 
     int fd = open("/dev/net/tun", O_RDWR);
@@ -35,6 +35,6 @@ int libtun_open(char *deviceName) {
     return fd;
 }
 
-int libtun_close(int fd) {
+int closeTunDevice(int fd) {
     return close(fd);
 }
